@@ -1749,88 +1749,231 @@ def animate_robot():
         robot_real_pos[1] -= ANIMATION_SPEED
 
 
-def draw_battery():
-    """Exibe o nível de bateria na tela e status de recarga."""
-    battery_text = f"Bateria: {int(battery)}%"
+def draw_side_panel():
+    """Desenha o painel lateral direito com todas as informações do jogo."""
+    global GRID_WIDTH, PANEL_WIDTH, font_small, font_tiny
     
-    # Mostra status de recarga
+    panel_x = GRID_WIDTH
+    panel_y = 0
+    panel_bg_color = (30, 30, 40)  # Azul escuro
+    panel_border_color = (100, 100, 120)
+    
+    # Desenha fundo do painel
+    pygame.draw.rect(screen, panel_bg_color, (panel_x, panel_y, PANEL_WIDTH, HEIGHT))
+    pygame.draw.line(screen, panel_border_color, (panel_x, 0), (panel_x, HEIGHT), 3)
+    
+    # Posição inicial para textos
+    y_offset = 20
+    x_margin = panel_x + 15
+    line_height = 35
+    
+    # ========== TÍTULO ==========
+    title_text = font.render("STATUS", True, (255, 255, 255))
+    screen.blit(title_text, (x_margin, y_offset))
+    y_offset += 50
+    
+    # ========== MODO ==========
+    if auto_mode == AUTO_MODE_FULL:
+        mode_text = "AUTOMÁTICO TOTAL"
+        mode_color = GREEN
+        mode_icon = "🤖"
+    elif auto_mode == AUTO_MODE_SEMI:
+        mode_text = "SEMI-AUTOMÁTICO"
+        mode_color = (255, 200, 0)
+        mode_icon = "🔄"
+    else:
+        mode_text = "MANUAL"
+        mode_color = WHITE
+        mode_icon = "🎮"
+    
+    mode_label = font_small.render("Modo:", True, (200, 200, 200))
+    screen.blit(mode_label, (x_margin, y_offset))
+    y_offset += 30
+    mode_surface = font_small.render(mode_text, True, mode_color)
+    screen.blit(mode_surface, (x_margin + 10, y_offset))
+    y_offset += 40
+    
+    # ========== AÇÃO ATUAL ==========
+    if auto_mode != AUTO_MODE_OFF and current_action:
+        action_label = font_small.render("Ação:", True, (200, 200, 200))
+        screen.blit(action_label, (x_margin, y_offset))
+        y_offset += 30
+        
+        action_text = current_action.upper()
+        if current_path:
+            action_text += f" ({len(current_path) - current_path_index} passos)"
+        action_surface = font_tiny.render(action_text, True, mode_color)
+        screen.blit(action_surface, (x_margin + 10, y_offset))
+        y_offset += 35
+    
+    # Linha separadora
+    pygame.draw.line(screen, panel_border_color, (x_margin, y_offset), (panel_x + PANEL_WIDTH - 15, y_offset), 2)
+    y_offset += 20
+    
+    # ========== BATERIA ==========
+    battery_label = font_small.render("Bateria:", True, (200, 200, 200))
+    screen.blit(battery_label, (x_margin, y_offset))
+    y_offset += 30
+    
+    # Barra de bateria
+    bar_width = PANEL_WIDTH - 40
+    bar_height = 25
+    bar_x = x_margin + 5
+    bar_y = y_offset
+    
+    # Cor da bateria baseada no nível
+    if battery > 60:
+        battery_color = GREEN
+    elif battery > 30:
+        battery_color = (255, 255, 0)  # Amarelo
+    else:
+        battery_color = RED
+    
+    # Borda da barra
+    pygame.draw.rect(screen, (100, 100, 100), (bar_x, bar_y, bar_width, bar_height), 2)
+    # Preenchimento da barra
+    fill_width = int((bar_width - 4) * (battery / 100.0))
+    pygame.draw.rect(screen, battery_color, (bar_x + 2, bar_y + 2, fill_width, bar_height - 4))
+    
+    # Texto da bateria
+    battery_text = f"{int(battery)}%"
+    battery_surface = font_small.render(battery_text, True, WHITE)
+    battery_rect = battery_surface.get_rect(center=(bar_x + bar_width // 2, bar_y + bar_height // 2))
+    screen.blit(battery_surface, battery_rect)
+    y_offset += 35
+    
+    # Status de recarga
     if is_recharging:
-        # Calcula tempo restante
         battery_needed = 100 - battery_at_recharge_start
         time_needed = (battery_needed / 100.0) * RECHARGE_SPEED
         elapsed_time = (pygame.time.get_ticks() - recharge_start_time) / 1000.0
         time_remaining = max(0, time_needed - elapsed_time)
         
-        status_text = f"Recarregando... {time_remaining:.1f}s restantes"
-        color = GREEN
+        status_text = f"⚡ Recarregando..."
+        status_surface = font_tiny.render(status_text, True, GREEN)
+        screen.blit(status_surface, (x_margin + 10, y_offset))
+        y_offset += 25
+        
+        time_text = f"({time_remaining:.1f}s restantes)"
+        time_surface = font_tiny.render(time_text, True, (150, 255, 150))
+        screen.blit(time_surface, (x_margin + 10, y_offset))
+        y_offset += 30
     elif is_at_recharge_station() and not is_recharging and battery < 100:
-        # Está na estação mas ainda não começou a recarregar (e precisa recarregar)
         wait_time = (pygame.time.get_ticks() - time_at_station) / 1000.0 if time_at_station > 0 else 0
         wait_remaining = max(0, (STATION_WAIT_TIME / 1000.0) - wait_time)
-        status_text = f"Aguardando... {wait_remaining:.1f}s para iniciar recarga"
-        color = (255, 255, 0)  # Amarelo
-    else:
-        status_text = ""
-        color = WHITE
+        
+        status_text = f"⏳ Aguardando..."
+        status_surface = font_tiny.render(status_text, True, (255, 255, 0))
+        screen.blit(status_surface, (x_margin + 10, y_offset))
+        y_offset += 25
+        
+        time_text = f"({wait_remaining:.1f}s)"
+        time_surface = font_tiny.render(time_text, True, (255, 255, 150))
+        screen.blit(time_surface, (x_margin + 10, y_offset))
+        y_offset += 30
     
-    text = font.render(battery_text, True, color)
-    screen.blit(text, (10, HEIGHT - 40))
+    # Linha separadora
+    pygame.draw.line(screen, panel_border_color, (x_margin, y_offset), (panel_x + PANEL_WIDTH - 15, y_offset), 2)
+    y_offset += 20
     
-    if status_text:
-        status_surface = font.render(status_text, True, color)
-        screen.blit(status_surface, (10, HEIGHT - 80))
+    # ========== INVENTÁRIO ==========
+    inventory_label = font_small.render("Inventário:", True, (200, 200, 200))
+    screen.blit(inventory_label, (x_margin, y_offset))
+    y_offset += 30
+    
+    inventory_text = f"{len(robot_inventory)}/{ROBOT_CAPACITY} itens"
+    inventory_color = (255, 200, 0) if len(robot_inventory) > 0 else WHITE
+    inventory_surface = font_small.render(inventory_text, True, inventory_color)
+    screen.blit(inventory_surface, (x_margin + 10, y_offset))
+    y_offset += 35
+    
+    # Status de entrega
+    if is_delivering:
+        items_remaining = len(robot_inventory)
+        status_text = f"📦 Entregando..."
+        status_surface = font_tiny.render(status_text, True, GREEN)
+        screen.blit(status_surface, (x_margin + 10, y_offset))
+        y_offset += 25
+        
+        items_text = f"({items_remaining} restantes)"
+        items_surface = font_tiny.render(items_text, True, (150, 255, 150))
+        screen.blit(items_surface, (x_margin + 10, y_offset))
+        y_offset += 30
+    elif is_at_warehouse() and len(robot_inventory) > 0 and not is_delivering:
+        wait_time = (pygame.time.get_ticks() - time_at_warehouse) / 1000.0 if time_at_warehouse > 0 else 0
+        wait_remaining = max(0, (WAREHOUSE_WAIT_TIME / 1000.0) - wait_time)
+        
+        status_text = f"⏳ Aguardando..."
+        status_surface = font_tiny.render(status_text, True, (255, 200, 0))
+        screen.blit(status_surface, (x_margin + 10, y_offset))
+        y_offset += 25
+        
+        time_text = f"({wait_remaining:.1f}s)"
+        time_surface = font_tiny.render(time_text, True, (255, 255, 150))
+        screen.blit(time_surface, (x_margin + 10, y_offset))
+        y_offset += 30
+    
+    # Linha separadora
+    pygame.draw.line(screen, panel_border_color, (x_margin, y_offset), (panel_x + PANEL_WIDTH - 15, y_offset), 2)
+    y_offset += 20
+    
+    # ========== ESTATÍSTICAS ==========
+    stats_label = font_small.render("Estatísticas:", True, (200, 200, 200))
+    screen.blit(stats_label, (x_margin, y_offset))
+    y_offset += 30
+    
+    # Itens entregues
+    delivered_text = f"✓ Entregues: {items_delivered_count}"
+    delivered_surface = font_tiny.render(delivered_text, True, (150, 255, 150))
+    screen.blit(delivered_surface, (x_margin + 10, y_offset))
+    y_offset += 30
+    
+    # Itens restantes
+    items_remaining = sum(len(items) for items in items_on_grid.values())
+    remaining_text = f"○ No ambiente: {items_remaining}"
+    remaining_surface = font_tiny.render(remaining_text, True, (255, 255, 150))
+    screen.blit(remaining_surface, (x_margin + 10, y_offset))
+    y_offset += 35
+    
+    # Linha separadora
+    pygame.draw.line(screen, panel_border_color, (x_margin, y_offset), (panel_x + PANEL_WIDTH - 15, y_offset), 2)
+    y_offset += 20
+    
+    # ========== CONTROLES ==========
+    controls_label = font_small.render("Controles:", True, (200, 200, 200))
+    screen.blit(controls_label, (x_margin, y_offset))
+    y_offset += 30
+    
+    controls = [
+        ("Setas", "Mover robô"),
+        ("1/2", "Coletar item"),
+        ("A", "Auto Total"),
+        ("S", "Semi-Auto"),
+        ("R", "Reiniciar"),
+    ]
+    
+    for key, desc in controls:
+        key_surface = font_tiny.render(f"{key}:", True, (200, 200, 255))
+        screen.blit(key_surface, (x_margin + 10, y_offset))
+        
+        desc_surface = font_tiny.render(desc, True, (180, 180, 180))
+        screen.blit(desc_surface, (x_margin + 80, y_offset))
+        y_offset += 25
+
+
+def draw_battery():
+    """Função mantida para compatibilidade, mas não é mais usada."""
+    pass
 
 
 def draw_delivery_status():
-    """Exibe o status de entrega de itens."""
-    if is_delivering:
-        # Está entregando itens
-        items_remaining = len(robot_inventory)
-        status_text = f"Entregando... {items_remaining} itens restantes"
-        color = GREEN
-    elif is_at_warehouse() and len(robot_inventory) > 0 and not is_delivering:
-        # Está no almoxarifado com itens mas ainda não começou a entregar
-        wait_time = (pygame.time.get_ticks() - time_at_warehouse) / 1000.0 if time_at_warehouse > 0 else 0
-        wait_remaining = max(0, (WAREHOUSE_WAIT_TIME / 1000.0) - wait_time)
-        status_text = f"Aguardando... {wait_remaining:.1f}s para iniciar entrega"
-        color = (255, 200, 0)  # Laranja
-    else:
-        status_text = ""
-        color = WHITE
-    
-    if status_text:
-        status_surface = font.render(status_text, True, color)
-        screen.blit(status_surface, (10, HEIGHT - 120))
-    
-    # Mostra contador de itens entregues
-    if items_delivered_count > 0:
-        delivered_text = f"Itens entregues: {items_delivered_count}"
-        delivered_surface = font.render(delivered_text, True, WHITE)
-        screen.blit(delivered_surface, (10, HEIGHT - 160))
+    """Função mantida para compatibilidade, mas não é mais usada."""
+    pass
 
 
 def draw_auto_mode_status():
-    """Exibe o status do modo automático."""
-    if auto_mode == AUTO_MODE_FULL:
-        mode_text = "Modo: AUTOMÁTICO TOTAL (A para desativar)"
-        color = GREEN
-    elif auto_mode == AUTO_MODE_SEMI:
-        mode_text = "Modo: SEMI-AUTOMÁTICO (S para desativar)"
-        color = (255, 200, 0)  # Laranja
-    else:
-        mode_text = "Modo: MANUAL (A=Auto Total, S=Semi-Auto)"
-        color = WHITE
-    
-    mode_surface = font.render(mode_text, True, color)
-    screen.blit(mode_surface, (10, 10))
-    
-    # Mostra ação atual se estiver em modo automático
-    if auto_mode != AUTO_MODE_OFF and current_action:
-        action_text = f"Ação: {current_action.upper()}"
-        if current_path:
-            action_text += f" - {len(current_path) - current_path_index} passos restantes"
-        action_surface = font.render(action_text, True, color)
-        screen.blit(action_surface, (10, 50))
+    """Função mantida para compatibilidade, mas não é mais usada."""
+    pass
 
 
 def check_game_state():
@@ -1853,6 +1996,12 @@ def check_game_state():
 
 def draw_game_overlay():
     """Desenha mensagens de vitória ou game over."""
+    global GRID_WIDTH
+    
+    # Centro da área do grid (sem incluir o painel lateral)
+    grid_center_x = GRID_WIDTH // 2
+    grid_center_y = HEIGHT // 2
+    
     if game_state == "victory":
         # Mensagem de vitória
         overlay = pygame.Surface((WIDTH, HEIGHT))
@@ -1863,19 +2012,19 @@ def draw_game_overlay():
         # Título
         title_font = pygame.font.Font(None, 72)
         title_text = title_font.render("PARABÉNS!", True, GREEN)
-        title_rect = title_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
+        title_rect = title_text.get_rect(center=(grid_center_x, grid_center_y - 60))
         screen.blit(title_text, title_rect)
         
         # Mensagem
         message_font = pygame.font.Font(None, 48)
         message_text = message_font.render("Todos os itens foram entregues!", True, WHITE)
-        message_rect = message_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+        message_rect = message_text.get_rect(center=(grid_center_x, grid_center_y))
         screen.blit(message_text, message_rect)
         
         # Instrução
         instruction_font = pygame.font.Font(None, 36)
         instruction_text = instruction_font.render("Pressione ESPAÇO para jogar novamente", True, (200, 200, 200))
-        instruction_rect = instruction_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 60))
+        instruction_rect = instruction_text.get_rect(center=(grid_center_x, grid_center_y + 60))
         screen.blit(instruction_text, instruction_rect)
         
     elif game_state == "game_over":
@@ -1888,25 +2037,25 @@ def draw_game_overlay():
         # Título
         title_font = pygame.font.Font(None, 72)
         title_text = title_font.render("GAME OVER", True, RED)
-        title_rect = title_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
+        title_rect = title_text.get_rect(center=(grid_center_x, grid_center_y - 60))
         screen.blit(title_text, title_rect)
         
         # Mensagem
         message_font = pygame.font.Font(None, 48)
         message_text = message_font.render("Bateria acabou!", True, WHITE)
-        message_rect = message_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+        message_rect = message_text.get_rect(center=(grid_center_x, grid_center_y))
         screen.blit(message_text, message_rect)
         
         # Mensagem adicional
         items_remaining = sum(len(items) for items in items_on_grid.values()) + len(robot_inventory)
         additional_text = message_font.render(f"Ainda há {items_remaining} itens para entregar", True, (255, 200, 200))
-        additional_rect = additional_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
+        additional_rect = additional_text.get_rect(center=(grid_center_x, grid_center_y + 40))
         screen.blit(additional_text, additional_rect)
         
         # Instrução
         instruction_font = pygame.font.Font(None, 36)
         instruction_text = instruction_font.render("Pressione ESPAÇO para tentar novamente", True, (200, 200, 200))
-        instruction_rect = instruction_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 100))
+        instruction_rect = instruction_text.get_rect(center=(grid_center_x, grid_center_y + 100))
         screen.blit(instruction_text, instruction_rect)
 
 
@@ -1992,9 +2141,7 @@ while running:
         animate_robot()  # Atualiza a posição do robô suavemente
         draw_robot(scale=0.45)
         draw_robot_item_count()  # Mostra quantidade de itens carregados
-        draw_battery()
-        draw_delivery_status()  # Mostra status de entrega
-        draw_auto_mode_status()  # Mostra status do modo automático
+        draw_side_panel()  # Desenha painel lateral com todas as informações
     else:
         # Desenha o jogo pausado
         draw_grid()
@@ -2002,8 +2149,7 @@ while running:
         animate_robot()  # Mantém animação mesmo pausado
         draw_robot(scale=0.45)
         draw_robot_item_count()
-        draw_battery()
-        draw_delivery_status()
+        draw_side_panel()  # Desenha painel lateral com todas as informações
     
     # Desenha overlay de vitória ou game over
     draw_game_overlay()
