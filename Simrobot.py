@@ -1188,6 +1188,10 @@ def execute_auto_action():
     if not current_path:
         return
     
+    # CRÍTICO: Só executa ações se a animação estiver completa
+    if not is_animation_complete():
+        return  # Aguarda animação completar antes de executar qualquer ação
+    
     # Se ainda está seguindo um caminho
     if current_path_index < len(current_path):
         next_pos = current_path[current_path_index]
@@ -1371,6 +1375,11 @@ def update_auto_mode():
     
     if auto_mode == AUTO_MODE_OFF:
         return
+    
+    # CRÍTICO: Se a animação não estiver completa, não processa novas ações
+    # Isso garante que o robô visualmente chegue na posição antes de coletar/entregar
+    if not is_animation_complete():
+        return  # Aguarda animação completar
     
     # Debug: log quando entra em update_auto_mode no modo semi-automático
     if auto_mode == AUTO_MODE_SEMI and not current_path and not waiting_for_action:
@@ -1583,6 +1592,18 @@ def update_auto_mode():
         execute_auto_action()
     elif auto_mode == AUTO_MODE_SEMI:
         log(f"[DEBUG] Modo semi-automático ativo mas sem caminho! waiting_for_action={waiting_for_action}, current_action={current_action}", "AUTO")
+
+
+def is_animation_complete():
+    """Verifica se a animação do robô está completa (posição visual = posição lógica)."""
+    target_x = robot_grid_pos[0] * CELL_SIZE
+    target_y = robot_grid_pos[1] * CELL_SIZE
+    
+    # Considera completa se está muito próxima (dentro de ANIMATION_SPEED)
+    x_aligned = abs(robot_real_pos[0] - target_x) < ANIMATION_SPEED
+    y_aligned = abs(robot_real_pos[1] - target_y) < ANIMATION_SPEED
+    
+    return x_aligned and y_aligned
 
 
 def animate_robot():
