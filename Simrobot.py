@@ -68,6 +68,14 @@ last_position = robot_grid_pos.copy()  # Última posição para detectar movimen
 items_on_grid = {}
 robot_inventory = []  # Lista de itens carregados pelo robô
 
+# Variáveis de entrega automática
+WAREHOUSE_WAIT_TIME = 3000  # Tempo em milissegundos para iniciar entrega (3 segundos)
+DELIVERY_INTERVAL = 1000  # Intervalo entre entregas (1 segundo = 1000ms)
+is_delivering = False
+time_at_warehouse = 0  # Tempo em milissegundos que está parado no almoxarifado
+last_delivery_time = 0  # Último tempo que entregou um item
+items_delivered_count = 0  # Contador de itens entregues
+
 
 def draw_grid():
     """Desenha a matriz representando o ambiente."""
@@ -174,6 +182,58 @@ def collect_item(item_index):
                 
                 return True
     return False
+
+
+def is_at_warehouse():
+    """Verifica se o robô está em um almoxarifado."""
+    x, y = robot_grid_pos
+    return matriz2[y][x] == 'A'
+
+
+def update_auto_delivery():
+    """Gerencia a entrega automática de itens no almoxarifado."""
+    global robot_inventory, is_delivering, time_at_warehouse, last_delivery_time, items_delivered_count, last_position
+    
+    current_time = pygame.time.get_ticks()
+    
+    # Verifica se está em um almoxarifado e tem itens
+    if is_at_warehouse() and len(robot_inventory) > 0:
+        # Verifica se o robô se moveu desde a última verificação
+        if robot_grid_pos == last_position:
+            # Se não se moveu, incrementa o tempo no almoxarifado
+            if not is_delivering:
+                # Ainda não está entregando, verifica se já passou o tempo de espera
+                if time_at_warehouse == 0:
+                    time_at_warehouse = current_time
+                elif current_time - time_at_warehouse >= WAREHOUSE_WAIT_TIME:
+                    # Passou 3 segundos, inicia a entrega
+                    is_delivering = True
+                    last_delivery_time = current_time
+            else:
+                # Já está entregando, verifica se passou 1 segundo desde a última entrega
+                if current_time - last_delivery_time >= DELIVERY_INTERVAL:
+                    # Entrega um item
+                    if len(robot_inventory) > 0:
+                        robot_inventory.pop(0)  # Remove o primeiro item
+                        items_delivered_count += 1
+                        last_delivery_time = current_time
+                    
+                    # Se não há mais itens, para de entregar
+                    if len(robot_inventory) == 0:
+                        is_delivering = False
+                        time_at_warehouse = 0
+        else:
+            # Robô se moveu ou chegou no almoxarifado, atualiza last_position e reseta entrega
+            is_delivering = False
+            time_at_warehouse = 0
+            last_position = robot_grid_pos.copy()
+    else:
+        # Não está em almoxarifado ou não tem itens, reseta tudo
+        if is_delivering or time_at_warehouse > 0:
+            is_delivering = False
+            time_at_warehouse = 0
+        if not is_at_warehouse():
+            last_position = robot_grid_pos.copy()
 
 
 def get_robot_color():
@@ -422,6 +482,7 @@ def draw_robot2():
 def move_robot(command):
     """Move o robô baseado nos comandos recebidos e inicia a animação."""
     global robot_grid_pos, battery, is_recharging, time_at_station, last_position
+    global is_delivering, time_at_warehouse
 
     if battery <= 0:
         return  # Se a bateria estiver em 0, o robô não pode se mover
@@ -440,10 +501,12 @@ def move_robot(command):
     else:
         return  # Se o movimento for inválido, não gasta bateria
 
-    # Se o robô se moveu, interrompe a recarga e reseta o tempo na estação
+    # Se o robô se moveu, interrompe a recarga e entrega, e reseta os tempos
     if robot_grid_pos != old_pos:
         is_recharging = False
         time_at_station = 0
+        is_delivering = False
+        time_at_warehouse = 0
         last_position = robot_grid_pos.copy()
         battery -= 2  # Reduz a bateria em 2% a cada movimento
 
@@ -561,6 +624,34 @@ def draw_battery():
         screen.blit(status_surface, (10, HEIGHT - 80))
 
 
+def draw_delivery_status():
+    """Exibe o status de entrega de itens."""
+    if is_delivering:
+        # Está entregando itens
+        items_remaining = len(robot_inventory)
+        status_text = f"Entregando... {items_remaining} itens restantes"
+        color = GREEN
+    elif is_at_warehouse() and len(robot_inventory) > 0 and not is_delivering:
+        # Está no almoxarifado com itens mas ainda não começou a entregar
+        wait_time = (pygame.time.get_ticks() - time_at_warehouse) / 1000.0 if time_at_warehouse > 0 else 0
+        wait_remaining = max(0, (WAREHOUSE_WAIT_TIME / 1000.0) - wait_time)
+        status_text = f"Aguardando... {wait_remaining:.1f}s para iniciar entrega"
+        color = (255, 200, 0)  # Laranja
+    else:
+        status_text = ""
+        color = WHITE
+    
+    if status_text:
+        status_surface = font.render(status_text, True, color)
+        screen.blit(status_surface, (10, HEIGHT - 120))
+    
+    # Mostra contador de itens entregues
+    if items_delivered_count > 0:
+        delivered_text = f"Itens entregues: {items_delivered_count}"
+        delivered_surface = font.render(delivered_text, True, WHITE)
+        screen.blit(delivered_surface, (10, HEIGHT - 160))
+
+
 # Inicializar itens aleatoriamente
 initialize_items_randomly()
 
@@ -574,12 +665,16 @@ while running:
     # Atualiza a recarga automática
     update_auto_recharge()
     
+    # Atualiza a entrega automática
+    update_auto_delivery()
+    
     draw_grid()
     draw_items_on_grid()  # Desenha itens no grid
     animate_robot()  # Atualiza a posição do robô suavemente
     draw_robot(scale=0.45)
     draw_robot_item_count()  # Mostra quantidade de itens carregados
     draw_battery()
+    draw_delivery_status()  # Mostra status de entrega
 
     pygame.display.flip()
     clock.tick(30)  # Atualiza 30 vezes por segundo
