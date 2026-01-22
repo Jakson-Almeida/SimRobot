@@ -1097,7 +1097,18 @@ def decide_next_action_intelligent():
             log(f"  - Decisão: COLETAR item (bateria suficiente: {battery:.1f}%)", "DECISION")
             return ('collect', nearest_item, 'Coletar item')
         else:
-            # Bateria insuficiente, PRECISA RECARREGAR ANTES
+            # Bateria insuficiente, verifica se precisa recarregar
+            # Se já está na estação de recarga, verifica se tem bateria suficiente segundo calculate_needed_battery()
+            if is_at_recharge_station():
+                needed_battery = calculate_needed_battery()
+                if battery >= needed_battery:
+                    log(f"  - Já está na estação com bateria suficiente ({battery:.1f}% >= {needed_battery:.1f}%), decisão: COLETAR", "DECISION")
+                    return ('collect', nearest_item, 'Coletar item')
+                else:
+                    log(f"  - Está na estação mas precisa recarregar mais ({battery:.1f}% < {needed_battery:.1f}%), decisão: RECARREGAR", "DECISION")
+                    return ('recharge', robot_pos, 'Recarregar antes de coletar')
+            
+            # Não está na estação, precisa ir até lá
             log(f"  - Bateria insuficiente ({battery:.1f}% < {total_cost + SAFETY_MARGIN:.1f}%), decisão: RECARREGAR ANTES", "DECISION")
             if nearest_recharge:
                 cost_to_recharge = calculate_route_cost(robot_pos, nearest_recharge)
