@@ -54,13 +54,18 @@ for row_idx, row in enumerate(matriz2):
 pygame.init()
 
 # Configurar a tela
-WIDTH = len(matriz2[0]) * CELL_SIZE
-HEIGHT = len(matriz2) * CELL_SIZE
+GRID_WIDTH = len(matriz2[0]) * CELL_SIZE
+GRID_HEIGHT = len(matriz2) * CELL_SIZE
+PANEL_WIDTH = 350  # Largura do painel lateral
+WIDTH = GRID_WIDTH + PANEL_WIDTH  # Largura total da tela
+HEIGHT = GRID_HEIGHT
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Simulador de Robô com Bateria e Gradiente")
 
 # Fonte para exibição de texto
 font = pygame.font.Font(None, 36)
+font_small = pygame.font.Font(None, 28)
+font_tiny = pygame.font.Font(None, 22)
 
 # Posição real do robô (para animação)
 robot_real_pos = [robot_grid_pos[0] * CELL_SIZE, robot_grid_pos[1] * CELL_SIZE]
@@ -1751,8 +1756,6 @@ def animate_robot():
 
 def draw_side_panel():
     """Desenha o painel lateral direito com todas as informações do jogo."""
-    global GRID_WIDTH, PANEL_WIDTH, font_small, font_tiny
-    
     panel_x = GRID_WIDTH
     panel_y = 0
     panel_bg_color = (30, 30, 40)  # Azul escuro
@@ -1996,8 +1999,6 @@ def check_game_state():
 
 def draw_game_overlay():
     """Desenha mensagens de vitória ou game over."""
-    global GRID_WIDTH
-    
     # Centro da área do grid (sem incluir o painel lateral)
     grid_center_x = GRID_WIDTH // 2
     grid_center_y = HEIGHT // 2
