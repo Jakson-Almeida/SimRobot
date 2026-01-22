@@ -767,6 +767,167 @@ def estimate_battery_cost(path):
     return (len(path) - 1) * 2  # 2% por movimento
 
 
+def calculate_route_cost(from_pos, to_pos):
+    """Calcula custo de bateria para ir de uma posição a outra."""
+    graph = build_graph_from_matrix(matriz2)
+    path = a_star(graph, from_pos, to_pos)
+    if path:
+        return estimate_battery_cost(path)
+    return float('inf')  # Sem caminho
+
+
+def decide_next_action_intelligent():
+    """
+    Decide a próxima ação de forma inteligente para modo semi-automático.
+    Considera custos de bateria e planeja antecipadamente.
+    Retorna: ('action_type', target_pos, description) ou None
+    """
+    robot_pos = tuple(robot_grid_pos)
+    items, warehouses, recharge_stations = find_all_positions()
+    graph = build_graph_from_matrix(matriz2)
+    
+    SAFETY_MARGIN = 10  # Margem de segurança de bateria
+    
+    log("=== ANÁLISE INTELIGENTE (MODO SEMI-AUTOMÁTICO) ===", "DECISION")
+    log(f"Estado atual: Posição: ({robot_pos[0]}, {robot_pos[1]}), Bateria: {battery:.1f}%, Inventário: {len(robot_inventory)}/{ROBOT_CAPACITY}, Itens restantes: {len(items)}", "DECISION")
+    
+    # Caso 1: Está no almoxarifado com itens -> ENTREGA
+    if is_at_warehouse() and len(robot_inventory) > 0:
+        log(f"Decisão: ENTREGAR (já está no almoxarifado com {len(robot_inventory)} itens)", "DECISION")
+        return ('deliver', robot_pos, 'Entregar itens no almoxarifado')
+    
+    # Caso 2: Está na estação de recarga com bateria baixa -> RECARGA
+    if is_at_recharge_station() and battery < 100:
+        log(f"Decisão: RECARREGAR (já está na estação, bateria: {battery:.1f}%)", "DECISION")
+        return ('recharge', robot_pos, 'Recarregar bateria na estação')
+    
+    # Caso 3: Bateria crítica (< 20%) -> PRIORIDADE MÁXIMA: IR RECARREGAR
+    if battery < 20:
+        if not recharge_stations:
+            log("ERRO: Bateria crítica mas não há estações de recarga!", "ERROR")
+            return None
+        nearest_recharge = find_nearest(robot_pos, recharge_stations)
+        if nearest_recharge:
+            cost_to_recharge = calculate_route_cost(robot_pos, nearest_recharge)
+            if battery >= cost_to_recharge + SAFETY_MARGIN:
+                log(f"Decisão: RECARREGAR (bateria crítica: {battery:.1f}%, custo: {cost_to_recharge:.1f}%)", "DECISION")
+                return ('recharge', nearest_recharge, f'Bateria crítica ({battery:.1f}%), indo recarregar')
+            else:
+                log(f"ALERTA: Bateria insuficiente para chegar à estação! Bateria: {battery:.1f}%, Custo: {cost_to_recharge:.1f}%", "ERROR")
+                return None
+    
+    # Caso 4: Tem itens no inventário -> ANALISAR SE DEVE ENTREGAR OU COLETAR MAIS
+    if len(robot_inventory) > 0:
+        log(f"Análise: Robô com {len(robot_inventory)} itens no inventário", "DECISION")
+        
+        if not warehouses:
+            log("ERRO: Tem itens mas não há almoxarifados!", "ERROR")
+            return None
+        
+        nearest_warehouse = find_nearest(robot_pos, warehouses)
+        cost_to_warehouse = calculate_route_cost(robot_pos, nearest_warehouse)
+        
+        # Calcular custo para ir ao almoxarifado e depois à estação de recarga
+        nearest_recharge = find_nearest(nearest_warehouse, recharge_stations) if recharge_stations else None
+        cost_warehouse_to_recharge = calculate_route_cost(nearest_warehouse, nearest_recharge) if nearest_recharge else 0
+        
+        total_cost_deliver = cost_to_warehouse + cost_warehouse_to_recharge
+        
+        log(f"  - Custo para ir ao almoxarifado: {cost_to_warehouse:.1f}%", "DECISION")
+        log(f"  - Custo almoxarifado -> estação: {cost_warehouse_to_recharge:.1f}%", "DECISION")
+        log(f"  - Custo total (entregar + poder recarregar): {total_cost_deliver:.1f}%", "DECISION")
+        
+        # Se bateria não é suficiente para entregar E depois recarregar, PRECISA RECARREGAR ANTES
+        if battery < total_cost_deliver + SAFETY_MARGIN:
+            log(f"  - Bateria insuficiente ({battery:.1f}% < {total_cost_deliver + SAFETY_MARGIN:.1f}%) para entregar e depois recarregar!", "DECISION")
+            log(f"  - Decisão: RECARREGAR ANTES de entregar", "DECISION")
+            
+            if nearest_recharge:
+                cost_to_recharge = calculate_route_cost(robot_pos, nearest_recharge)
+                if battery >= cost_to_recharge + SAFETY_MARGIN:
+                    return ('recharge', nearest_recharge, 'Recarregar antes de entregar (bateria insuficiente)')
+                else:
+                    log(f"ERRO: Bateria insuficiente até para recarregar! Bateria: {battery:.1f}%, Custo: {cost_to_recharge:.1f}%", "ERROR")
+                    return None
+        
+        # Se inventário está cheio, DEVE ENTREGAR
+        if len(robot_inventory) >= ROBOT_CAPACITY:
+            log(f"  - Inventário cheio ({len(robot_inventory)}/{ROBOT_CAPACITY}), decisão: ENTREGAR", "DECISION")
+            return ('deliver', nearest_warehouse, 'Inventário cheio, entregar itens')
+        
+        # Se inventário não está cheio, AVALIAR SE DEVE COLETAR MAIS OU ENTREGAR
+        if items:
+            nearest_item = find_nearest(robot_pos, items)
+            cost_to_item = calculate_route_cost(robot_pos, nearest_item)
+            
+            # Calcular custo total: coletar item -> ir ao almoxarifado -> ir à estação
+            cost_item_to_warehouse = calculate_route_cost(nearest_item, nearest_warehouse)
+            total_cost_collect = cost_to_item + cost_item_to_warehouse + cost_warehouse_to_recharge
+            
+            log(f"  - Custo para coletar mais item: {cost_to_item:.1f}%", "DECISION")
+            log(f"  - Custo total (coletar + entregar + recarregar): {total_cost_collect:.1f}%", "DECISION")
+            
+            # Se tem bateria para coletar mais, COLETA
+            if battery >= total_cost_collect + SAFETY_MARGIN:
+                log(f"  - Decisão: COLETAR mais item (bateria suficiente: {battery:.1f}%)", "DECISION")
+                return ('collect', nearest_item, f'Coletar mais item (inventário: {len(robot_inventory)}/{ROBOT_CAPACITY})')
+            else:
+                # Não tem bateria para coletar mais, ENTREGA O QUE TEM
+                log(f"  - Decisão: ENTREGAR itens atuais (bateria insuficiente para coletar mais)", "DECISION")
+                return ('deliver', nearest_warehouse, f'Entregar {len(robot_inventory)} itens')
+        else:
+            # Não há mais itens para coletar, ENTREGA O QUE TEM
+            log(f"  - Não há mais itens, decisão: ENTREGAR", "DECISION")
+            return ('deliver', nearest_warehouse, f'Entregar últimos {len(robot_inventory)} itens')
+    
+    # Caso 5: Inventário vazio -> COLETAR ITENS
+    if len(robot_inventory) == 0 and items:
+        log("Análise: Inventário vazio, procurando itens para coletar", "DECISION")
+        
+        nearest_item = find_nearest(robot_pos, items)
+        cost_to_item = calculate_route_cost(robot_pos, nearest_item)
+        
+        if not warehouses:
+            log("ERRO: Não há almoxarifados para entregar depois!", "ERROR")
+            return None
+        
+        nearest_warehouse = find_nearest(nearest_item, warehouses)
+        cost_item_to_warehouse = calculate_route_cost(nearest_item, nearest_warehouse)
+        
+        nearest_recharge = find_nearest(nearest_warehouse, recharge_stations) if recharge_stations else None
+        cost_warehouse_to_recharge = calculate_route_cost(nearest_warehouse, nearest_recharge) if nearest_recharge else 0
+        
+        total_cost = cost_to_item + cost_item_to_warehouse + cost_warehouse_to_recharge
+        
+        log(f"  - Custo para coletar item: {cost_to_item:.1f}%", "DECISION")
+        log(f"  - Custo item -> almoxarifado: {cost_item_to_warehouse:.1f}%", "DECISION")
+        log(f"  - Custo almoxarifado -> estação: {cost_warehouse_to_recharge:.1f}%", "DECISION")
+        log(f"  - Custo total: {total_cost:.1f}%", "DECISION")
+        
+        # Se tem bateria para coletar, entregar e recarregar, COLETA
+        if battery >= total_cost + SAFETY_MARGIN:
+            log(f"  - Decisão: COLETAR item (bateria suficiente: {battery:.1f}%)", "DECISION")
+            return ('collect', nearest_item, 'Coletar item')
+        else:
+            # Bateria insuficiente, PRECISA RECARREGAR ANTES
+            log(f"  - Bateria insuficiente ({battery:.1f}% < {total_cost + SAFETY_MARGIN:.1f}%), decisão: RECARREGAR ANTES", "DECISION")
+            if nearest_recharge:
+                cost_to_recharge = calculate_route_cost(robot_pos, nearest_recharge)
+                if battery >= cost_to_recharge + SAFETY_MARGIN:
+                    return ('recharge', nearest_recharge, 'Recarregar antes de coletar')
+                else:
+                    log(f"ERRO: Bateria insuficiente até para recarregar! Bateria: {battery:.1f}%, Custo: {cost_to_recharge:.1f}%", "ERROR")
+                    return None
+    
+    # Caso 6: Todos os itens coletados e entregues -> MISSÃO COMPLETA
+    if not items and len(robot_inventory) == 0:
+        log("=== MISSÃO COMPLETA! Todos os itens foram coletados e entregues ===", "DECISION")
+        return None
+    
+    log("ATENÇÃO: Nenhuma ação pôde ser decidida com segurança", "DECISION")
+    return None
+
+
 def decide_next_action():
     """
     Decide a próxima ação para modo semi-automático.
@@ -1074,12 +1235,29 @@ def execute_auto_action():
                 collect_item(1)
                 log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]}) após passar pela célula (caminho: {len(current_path)} passos)", "AUTO")
                 just_collected = True  # Marca que acabou de coletar
-                action_completed = True  # Marca que ação foi completada (para modo automático total)
+                
+                # Modo semi-automático: desativa após coletar
+                if auto_mode == AUTO_MODE_SEMI:
+                    current_action = None
+                    current_path = []
+                    current_path_index = 0
+                    waiting_for_action = False
+                    auto_mode = AUTO_MODE_OFF
+                    log("=== AÇÃO SEMI-AUTOMÁTICA COMPLETA: Coleta finalizada ===", "AUTO")
+                    log("Modo semi-automático DESATIVADO. Ative novamente ('S') para próxima ação.", "AUTO")
+                    return
+                # Modo automático total: continua
+                elif auto_mode == AUTO_MODE_FULL:
+                    action_completed = True  # Marca que ação foi completada
             else:
                 log(f"Ação automática FALHOU: Não é possível coletar em ({target_pos[0]}, {target_pos[1]}) - Posição atual: ({robot_grid_pos[0]}, {robot_grid_pos[1]}), Itens: {tuple(robot_grid_pos) in items_on_grid}, Inventário: {len(robot_inventory)}/{ROBOT_CAPACITY}", "ERROR")
-                # Se falhou, também marca como completada para avançar no plano
+                # Se falhou, também marca como completada para avançar no plano ou desativar modo
                 if auto_mode == AUTO_MODE_FULL:
                     action_completed = True
+                elif auto_mode == AUTO_MODE_SEMI:
+                    auto_mode = AUTO_MODE_OFF
+                    log("Modo semi-automático DESATIVADO devido a falha na coleta.", "AUTO")
+            
             # Sempre limpa a ação, mesmo se falhou, para evitar loop
             current_action = None
             current_path = []
@@ -1132,22 +1310,44 @@ def update_auto_mode():
     
     # Se está esperando ação completar (entrega ou recarga)
     if waiting_for_action:
-        if current_action == 'deliver' and len(robot_inventory) == 0:
-            waiting_for_action = False
-            current_action = None
-            current_path = []
-            current_path_index = 0
-            log("Entrega completa, decidindo próxima ação...", "AUTO")
-            # Continua para decidir próxima ação
-        elif current_action == 'recharge' and battery >= 100:
-            waiting_for_action = False
-            current_action = None
-            current_path = []
-            current_path_index = 0
-            log("Recarga completa, decidindo próxima ação...", "AUTO")
-            # Continua para decidir próxima ação
-        else:
-            return  # Continua esperando
+        # Modo semi-automático: desativa após completar ação
+        if auto_mode == AUTO_MODE_SEMI:
+            if current_action == 'deliver' and len(robot_inventory) == 0:
+                waiting_for_action = False
+                current_action = None
+                current_path = []
+                current_path_index = 0
+                auto_mode = AUTO_MODE_OFF
+                log("=== AÇÃO SEMI-AUTOMÁTICA COMPLETA: Entrega finalizada ===", "AUTO")
+                log("Modo semi-automático DESATIVADO. Ative novamente ('S') para próxima ação.", "AUTO")
+                return
+            elif current_action == 'recharge' and battery >= 100:
+                waiting_for_action = False
+                current_action = None
+                current_path = []
+                current_path_index = 0
+                auto_mode = AUTO_MODE_OFF
+                log("=== AÇÃO SEMI-AUTOMÁTICA COMPLETA: Recarga finalizada ===", "AUTO")
+                log("Modo semi-automático DESATIVADO. Ative novamente ('S') para próxima ação.", "AUTO")
+                return
+            else:
+                return  # Continua esperando
+        # Modo automático total: continua para próxima ação
+        elif auto_mode == AUTO_MODE_FULL:
+            if current_action == 'deliver' and len(robot_inventory) == 0:
+                waiting_for_action = False
+                current_action = None
+                current_path = []
+                current_path_index = 0
+                log("Entrega completa, decidindo próxima ação...", "AUTO")
+            elif current_action == 'recharge' and battery >= 100:
+                waiting_for_action = False
+                current_action = None
+                current_path = []
+                current_path_index = 0
+                log("Recarga completa, decidindo próxima ação...", "AUTO")
+            else:
+                return  # Continua esperando
     
     # Se não há caminho ativo, planeja próxima ação
     if not current_path:
@@ -1244,10 +1444,11 @@ def update_auto_mode():
                     update_auto_mode.plan_index = 0
         
         elif auto_mode == AUTO_MODE_SEMI:
-            # Modo semi-automático: decide próxima ação
-            action = decide_next_action()
+            # Modo semi-automático inteligente: decide próxima ação com análise de bateria
+            action = decide_next_action_intelligent()
             if action:
-                action_type, target_pos = action
+                action_type, target_pos, description = action
+                log(f"=== AÇÃO SEMI-AUTOMÁTICA INICIADA: {description} ===", "AUTO")
                 
                 # Se já está na posição alvo para entregar ou recarregar, não precisa calcular rota
                 if action_type in ['deliver', 'recharge'] and tuple(robot_grid_pos) == target_pos:
@@ -1265,6 +1466,8 @@ def update_auto_mode():
                     # Valida o caminho antes de usar
                     if path and not validate_path(path):
                         log(f"ERRO: Caminho inválido calculado para {action_type} -> ({target_pos[0]}, {target_pos[1]})! Abortando ação.", "ERROR")
+                        auto_mode = AUTO_MODE_OFF
+                        log("Modo semi-automático DESATIVADO devido a erro.", "AUTO")
                         return
                     
                     if path:
@@ -1295,12 +1498,16 @@ def update_auto_mode():
                                 if not adjacent_found:
                                     # Não há célula adjacente livre - não pode coletar sem passar pela célula
                                     log(f"Ação automática PULADA (Semi-Auto): Não há célula adjacente livre em ({target_pos[0]}, {target_pos[1]})", "AUTO")
+                                    auto_mode = AUTO_MODE_OFF
+                                    log("Modo semi-automático DESATIVADO.", "AUTO")
                                     current_action = None
                         else:
                             # Remove posição atual e valida o caminho restante
                             remaining_path = path[1:]
                             if not validate_path(remaining_path):
                                 log(f"ERRO: Caminho restante inválido após remover posição atual (Semi-Auto)! Abortando ação.", "ERROR")
+                                auto_mode = AUTO_MODE_OFF
+                                log("Modo semi-automático DESATIVADO devido a erro.", "AUTO")
                                 return
                             current_path = remaining_path
                             current_path_index = 0
@@ -1311,12 +1518,13 @@ def update_auto_mode():
                                 waiting_for_action = True
                     else:
                         log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
+                        auto_mode = AUTO_MODE_OFF
+                        log("Modo semi-automático DESATIVADO devido a erro.", "AUTO")
             else:
-                # decide_next_action() retornou None - não há ação disponível
-                # Mas verifica se realmente não há trabalho a fazer
-                items, _, _ = find_all_positions()
-                if items or len(robot_inventory) > 0 or battery < 100:
-                    log(f"ATENÇÃO: Modo semi-automático ativo mas nenhuma ação foi decidida! Itens: {len(items)}, Inventário: {len(robot_inventory)}, Bateria: {battery:.1f}%", "ERROR")
+                # decide_next_action_intelligent() retornou None
+                log("Nenhuma ação pode ser decidida com segurança no momento.", "AUTO")
+                auto_mode = AUTO_MODE_OFF
+                log("Modo semi-automático DESATIVADO.", "AUTO")
     
     # Executa ação atual
     if current_path:
