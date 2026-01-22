@@ -92,6 +92,16 @@ current_path_index = 0  # Índice no caminho atual
 current_action = None  # Ação atual: 'move', 'collect', 'deliver', 'recharge'
 waiting_for_action = False  # Se está esperando ação automática completar
 
+# Sistema de logs
+showLogs = True  # Controla se os logs são exibidos no terminal
+
+
+def log(message, level="INFO"):
+    """Exibe log no terminal se showLogs estiver ativo."""
+    if showLogs:
+        prefix = f"[{level}]"
+        print(f"{prefix:10} {message}")
+
 
 def draw_grid():
     """Desenha a matriz representando o ambiente."""
@@ -122,6 +132,7 @@ def initialize_items_randomly():
     """Inicializa itens aleatoriamente nas células tipo '1'."""
     global items_on_grid, total_items_initial
     
+    log("=== INICIALIZANDO ITENS NO AMBIENTE ===", "INIT")
     items_on_grid = {}
     total_items_initial = 0
     
@@ -139,6 +150,11 @@ def initialize_items_randomly():
                         item_type = random.choice(ITEM_TYPES)
                         items_on_grid[cell_key].append({'type': item_type})
                         total_items_initial += 1
+                    
+                    log(f"Item criado em ({col_idx}, {row_idx}): {num_items} itens tipo {item_type}", "INIT")
+    
+    log(f"Total de itens criados: {total_items_initial}", "INIT")
+    log(f"Células com itens: {len(items_on_grid)}", "INIT")
 
 
 def draw_items_on_grid():
@@ -194,11 +210,21 @@ def collect_item(item_index):
                 item = items_on_grid[cell_key].pop(item_pos)
                 robot_inventory.append(item)
                 
+                log(f"Item coletado: tipo {item['type']} em ({x}, {y})", "COLLECT")
+                log(f"Inventário: {len(robot_inventory) - 1} -> {len(robot_inventory)}/{ROBOT_CAPACITY}", "INVENTORY")
+                
                 # Remove a célula se não houver mais itens
                 if len(items_on_grid[cell_key]) == 0:
                     del items_on_grid[cell_key]
+                    log(f"Célula ({x}, {y}) esvaziada", "COLLECT")
                 
                 return True
+            else:
+                log(f"Índice de item inválido: {item_index} (disponíveis: {len(items_on_grid[cell_key])})", "ERROR")
+        else:
+            log(f"Inventário cheio! Capacidade: {ROBOT_CAPACITY}, Atual: {len(robot_inventory)}", "ERROR")
+    else:
+        log(f"Nenhum item disponível em ({x}, {y})", "ERROR")
     return False
 
 
@@ -223,10 +249,12 @@ def update_auto_delivery():
                 # Ainda não está entregando, verifica se já passou o tempo de espera
                 if time_at_warehouse == 0:
                     time_at_warehouse = current_time
+                    log(f"Robô chegou no almoxarifado com {len(robot_inventory)} itens. Aguardando {WAREHOUSE_WAIT_TIME/1000:.1f}s...", "DELIVERY")
                 elif current_time - time_at_warehouse >= WAREHOUSE_WAIT_TIME:
                     # Passou 3 segundos, inicia a entrega
                     is_delivering = True
                     last_delivery_time = current_time
+                    log(f"Entrega iniciada! {len(robot_inventory)} itens para entregar", "DELIVERY")
             else:
                 # Já está entregando, verifica se passou 1 segundo desde a última entrega
                 if current_time - last_delivery_time >= DELIVERY_INTERVAL:
@@ -235,11 +263,13 @@ def update_auto_delivery():
                         robot_inventory.pop(0)  # Remove o primeiro item
                         items_delivered_count += 1
                         last_delivery_time = current_time
+                        log(f"Item entregue! Restantes: {len(robot_inventory)}, Total entregue: {items_delivered_count}", "DELIVERY")
                     
                     # Se não há mais itens, para de entregar
                     if len(robot_inventory) == 0:
                         is_delivering = False
                         time_at_warehouse = 0
+                        log(f"Entrega completa! Total de itens entregues: {items_delivered_count}", "DELIVERY")
         else:
             # Robô se moveu ou chegou no almoxarifado, atualiza last_position e reseta entrega
             is_delivering = False
@@ -521,12 +551,26 @@ def move_robot(command):
 
     # Se o robô se moveu, interrompe a recarga e entrega, e reseta os tempos
     if robot_grid_pos != old_pos:
+        direction_map = {'mr': 'DIREITA', 'ml': 'ESQUERDA', 'mu': 'CIMA', 'md': 'BAIXO'}
+        log(f"Robô moveu {direction_map.get(command, command)}: ({old_pos[0]}, {old_pos[1]}) -> ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "MOVE")
+        log(f"Bateria: {battery + 2}% -> {battery - 2}%", "BATTERY")
+        
+        if is_recharging:
+            log("Recarga interrompida por movimento", "RECHARGE")
+        if is_delivering:
+            log("Entrega interrompida por movimento", "DELIVERY")
+        
         is_recharging = False
         time_at_station = 0
         is_delivering = False
         time_at_warehouse = 0
         last_position = robot_grid_pos.copy()
         battery -= 2  # Reduz a bateria em 2% a cada movimento
+        
+        # Log do tipo de célula atual
+        cell_type = matriz2[robot_grid_pos[1]][robot_grid_pos[0]]
+        cell_types = {'S': 'INÍCIO', 'R': 'RECARGA', 'A': 'ALMOXARIFADO', '1': 'CAMINHO LIVRE', '0': 'OBSTÁCULO'}
+        log(f"Robô está em célula tipo: {cell_types.get(cell_type, cell_type)}", "POSITION")
 
 
 def is_at_recharge_station():
@@ -555,11 +599,13 @@ def update_auto_recharge():
                 # Ainda não está recarregando, verifica se já passou o tempo de espera
                 if time_at_station == 0:
                     time_at_station = current_time
+                    log(f"Robô chegou na estação de recarga. Aguardando {STATION_WAIT_TIME/1000:.1f}s...", "RECHARGE")
                 elif current_time - time_at_station >= STATION_WAIT_TIME:
                     # Passou 3 segundos, inicia a recarga
                     is_recharging = True
                     recharge_start_time = current_time
                     battery_at_recharge_start = battery
+                    log(f"Recarga iniciada! Bateria: {battery:.1f}% -> 100% (estimado: {((100-battery)/100.0)*RECHARGE_SPEED:.1f}s)", "RECHARGE")
             else:
                 # Já está recarregando, atualiza a bateria
                 if battery < 100:
@@ -581,6 +627,7 @@ def update_auto_recharge():
                     # Bateria chegou a 100%, para de recarregar mas mantém na estação
                     is_recharging = False
                     battery = 100
+                    log("Recarga completa! Bateria: 100%", "RECHARGE")
         else:
             # Robô se moveu ou chegou na estação, atualiza last_position e reseta recarga
             is_recharging = False
@@ -753,6 +800,7 @@ def plan_full_mission():
     Planeja missão completa para modo automático total.
     Retorna lista de ações: [('action_type', target_pos), ...]
     """
+    log("Iniciando planejamento de missão completa...", "PLAN")
     mission_plan = []
     current_pos = tuple(robot_grid_pos)
     current_battery = battery
@@ -760,6 +808,10 @@ def plan_full_mission():
     graph = build_graph_from_matrix(matriz2)
     items, warehouses, recharge_stations = find_all_positions()
     
+    log(f"Itens restantes para coletar: {len(remaining_items)}", "PLAN")
+    log(f"Bateria atual: {current_battery}%", "PLAN")
+    
+    trip_number = 1
     while remaining_items:
         # Verifica se precisa recarregar antes de continuar
         if current_battery < 30 and recharge_stations:
@@ -767,6 +819,7 @@ def plan_full_mission():
             if nearest_recharge:
                 path = a_star(graph, current_pos, nearest_recharge)
                 if path:
+                    log(f"Viagem {trip_number}: Recarga planejada em ({nearest_recharge[0]}, {nearest_recharge[1]}) - Bateria: {current_battery}%", "PLAN")
                     mission_plan.append(('recharge', nearest_recharge))
                     current_pos = nearest_recharge
                     current_battery = 100
@@ -795,8 +848,11 @@ def plan_full_mission():
             current_battery -= battery_cost
         
         # Adiciona ações de coleta
-        for item_pos in items_to_collect:
-            mission_plan.append(('collect', item_pos))
+        if items_to_collect:
+            log(f"Viagem {trip_number}: Planejando coleta de {len(items_to_collect)} itens", "PLAN")
+            for item_pos in items_to_collect:
+                mission_plan.append(('collect', item_pos))
+                log(f"  - Coletar item em ({item_pos[0]}, {item_pos[1]})", "PLAN")
         
         # Vai entregar no almoxarifado mais próximo
         if items_to_collect and warehouses:
@@ -806,9 +862,12 @@ def plan_full_mission():
                 if path:
                     battery_cost = estimate_battery_cost(path)
                     current_battery -= battery_cost
+                    log(f"Viagem {trip_number}: Entrega planejada em ({nearest_warehouse[0]}, {nearest_warehouse[1]})", "PLAN")
                     mission_plan.append(('deliver', nearest_warehouse))
                     current_pos = nearest_warehouse
+                    trip_number += 1
     
+    log(f"Planejamento completo! Total de ações: {len(mission_plan)}", "PLAN")
     return mission_plan
 
 
@@ -847,6 +906,9 @@ def execute_auto_action():
             if (tuple(robot_grid_pos) in items_on_grid and 
                 len(items_on_grid[tuple(robot_grid_pos)]) > 0):
                 collect_item(1)
+                log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
+            else:
+                log(f"Ação automática FALHOU: Nenhum item em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "ERROR")
             current_action = None
             current_path = []
             current_path_index = 0
@@ -856,6 +918,7 @@ def execute_auto_action():
             # Entrega será automática quando chegar no almoxarifado
             # Aguarda entrega completar
             if len(robot_inventory) == 0:
+                log(f"Ação automática COMPLETA: Entrega em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
                 current_action = None
                 current_path = []
                 current_path_index = 0
@@ -865,6 +928,7 @@ def execute_auto_action():
             # Recarga será automática quando chegar na estação
             # Aguarda recarga completar
             if battery >= 100:
+                log(f"Ação automática COMPLETA: Recarga em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
                 current_action = None
                 current_path = []
                 current_path_index = 0
@@ -894,8 +958,10 @@ def update_auto_mode():
         if auto_mode == AUTO_MODE_FULL:
             # Modo automático total: planeja missão completa
             if not hasattr(update_auto_mode, 'full_mission_plan'):
+                log("=== PLANEJANDO MISSÃO COMPLETA (MODO AUTOMÁTICO TOTAL) ===", "AUTO")
                 update_auto_mode.full_mission_plan = plan_full_mission()
                 update_auto_mode.plan_index = 0
+                log(f"Missão planejada: {len(update_auto_mode.full_mission_plan)} ações", "AUTO")
             
             if update_auto_mode.plan_index < len(update_auto_mode.full_mission_plan):
                 action_type, target_pos = update_auto_mode.full_mission_plan[update_auto_mode.plan_index]
@@ -906,20 +972,25 @@ def update_auto_mode():
                     current_path = path[1:]  # Remove posição atual
                     current_path_index = 0
                     current_action = action_type
+                    log(f"Executando ação {update_auto_mode.plan_index + 1}/{len(update_auto_mode.full_mission_plan)}: {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
+                    log(f"Caminho calculado: {len(path)} passos", "AUTO")
                     if action_type in ['deliver', 'recharge']:
                         waiting_for_action = True
                     update_auto_mode.plan_index += 1
                 else:
                     # Sem caminho, pula esta ação
+                    log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
                     update_auto_mode.plan_index += 1
             else:
                 # Missão completa, verifica se há mais itens
                 items, _, _ = find_all_positions()
                 if not items and len(robot_inventory) == 0:
                     # Tudo entregue, para automação
+                    log("Missão completa! Todos os itens foram entregues.", "AUTO")
                     auto_mode = AUTO_MODE_OFF
                 else:
                     # Reinicia planejamento
+                    log("Reiniciando planejamento...", "AUTO")
                     update_auto_mode.full_mission_plan = plan_full_mission()
                     update_auto_mode.plan_index = 0
         
@@ -935,8 +1006,12 @@ def update_auto_mode():
                     current_path = path[1:]  # Remove posição atual
                     current_path_index = 0
                     current_action = action_type
+                    log(f"Decisão (Semi-Auto): {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
+                    log(f"Caminho calculado: {len(path)} passos", "AUTO")
                     if action_type in ['deliver', 'recharge']:
                         waiting_for_action = True
+                else:
+                    log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
     
     # Executa ação atual
     if current_path:
@@ -1163,6 +1238,20 @@ def reset_game():
 # Inicializar itens aleatoriamente
 initialize_items_randomly()
 
+# Log do estado inicial
+log("=" * 60, "INIT")
+log("=== SIMULADOR DE ROBÔ - INICIADO ===", "INIT")
+log(f"Posição inicial do robô: ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "INIT")
+log(f"Bateria inicial: {battery}%", "INIT")
+log(f"Capacidade do robô: {ROBOT_CAPACITY} itens", "INIT")
+log(f"Total de itens no ambiente: {total_items_initial}", "INIT")
+# Conta almoxarifados e estações de recarga
+warehouses_count = sum(1 for row in matriz2 for cell in row if cell == 'A')
+recharge_count = sum(1 for row in matriz2 for cell in row if cell == 'R')
+log(f"Almoxarifados disponíveis: {warehouses_count}", "INIT")
+log(f"Estações de recarga disponíveis: {recharge_count}", "INIT")
+log("=" * 60, "INIT")
+
 # Loop principal
 running = True
 clock = pygame.time.Clock()
@@ -1219,6 +1308,7 @@ while running:
                     # Alterna modo automático total
                     if auto_mode == AUTO_MODE_OFF:
                         auto_mode = AUTO_MODE_FULL
+                        log("=== MODO AUTOMÁTICO TOTAL ATIVADO ===", "MODE")
                         # Reseta planejamento
                         if hasattr(update_auto_mode, 'full_mission_plan'):
                             delattr(update_auto_mode, 'full_mission_plan')
@@ -1226,43 +1316,51 @@ while running:
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
                         current_action = None
+                        log("Modo automático DESATIVADO (voltou para MANUAL)", "MODE")
                 
                 elif event.key == pygame.K_s:
                     # Alterna modo semi-automático
                     if auto_mode == AUTO_MODE_OFF:
                         auto_mode = AUTO_MODE_SEMI
+                        log("=== MODO SEMI-AUTOMÁTICO ATIVADO ===", "MODE")
                     else:
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
                         current_action = None
+                        log("Modo automático DESATIVADO (voltou para MANUAL)", "MODE")
                 
                 # Controles normais (interrompem modo automático se usado)
                 elif event.key == pygame.K_RIGHT:
                     if auto_mode != AUTO_MODE_OFF:
+                        log("Modo automático interrompido por movimento manual", "MODE")
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
                         current_action = None
                     move_robot('mr')
                 elif event.key == pygame.K_LEFT:
                     if auto_mode != AUTO_MODE_OFF:
+                        log("Modo automático interrompido por movimento manual", "MODE")
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
                         current_action = None
                     move_robot('ml')
                 elif event.key == pygame.K_UP:
                     if auto_mode != AUTO_MODE_OFF:
+                        log("Modo automático interrompido por movimento manual", "MODE")
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
                         current_action = None
                     move_robot('mu')
                 elif event.key == pygame.K_DOWN:
                     if auto_mode != AUTO_MODE_OFF:
+                        log("Modo automático interrompido por movimento manual", "MODE")
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
                         current_action = None
                     move_robot('md')
                 elif event.key == pygame.K_1:
                     if auto_mode != AUTO_MODE_OFF:
+                        log("Modo automático interrompido por coleta manual", "MODE")
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
                         current_action = None
@@ -1270,6 +1368,7 @@ while running:
                     collect_item(1)
                 elif event.key == pygame.K_2:
                     if auto_mode != AUTO_MODE_OFF:
+                        log("Modo automático interrompido por coleta manual", "MODE")
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
                         current_action = None
