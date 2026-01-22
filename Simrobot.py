@@ -847,8 +847,11 @@ def decide_next_action_intelligent():
         return ('deliver', robot_pos, 'Entregar itens no almoxarifado')
     
     # Caso 2: Está na estação de recarga com bateria baixa -> RECARGA
-    if is_at_recharge_station() and battery < 100:
-        log(f"Decisão: RECARREGAR (já está na estação, bateria: {battery:.1f}%)", "DECISION")
+    # No modo automático total, só recarrega se abaixo do threshold. No manual/semi, até 100%
+    target_battery = RECHARGE_THRESHOLD if auto_mode == AUTO_MODE_FULL else 100
+    
+    if is_at_recharge_station() and battery < target_battery:
+        log(f"Decisão: RECARREGAR (já está na estação, bateria: {battery:.1f}%, alvo: {target_battery}%)", "DECISION")
         return ('recharge', robot_pos, 'Recarregar bateria na estação')
     
     # Caso 3: Bateria crítica (< 20%) -> PRIORIDADE MÁXIMA: IR RECARREGAR
