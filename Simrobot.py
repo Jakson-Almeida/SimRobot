@@ -674,6 +674,21 @@ def heuristic_manhattan(pos1, pos2):
     return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
 
+def validate_path(path):
+    """Valida se um caminho contém apenas células válidas (sem obstáculos)."""
+    if not path:
+        return False
+    for pos in path:
+        x, y = pos
+        if not (0 <= x < len(matriz2[0]) and 0 <= y < len(matriz2)):
+            log(f"ERRO: Posição fora dos limites: ({x}, {y})", "ERROR")
+            return False
+        if matriz2[y][x] == '0':
+            log(f"ERRO: Caminho contém obstáculo em ({x}, {y})", "ERROR")
+            return False
+    return True
+
+
 def a_star(graph, start, goal):
     """
     A* para encontrar caminho entre start e goal.
@@ -942,10 +957,38 @@ def execute_auto_action():
     if current_path_index < len(current_path):
         next_pos = current_path[current_path_index]
         
+        # VALIDAÇÃO CRÍTICA: Verifica se o próximo passo não é um obstáculo
+        if (0 <= next_pos[0] < len(matriz2[0]) and 0 <= next_pos[1] < len(matriz2)):
+            if matriz2[next_pos[1]][next_pos[0]] == '0':
+                # Próximo passo é um obstáculo! Aborta o caminho
+                log(f"ERRO CRÍTICO: Caminho contém obstáculo em ({next_pos[0]}, {next_pos[1]})! Abortando caminho.", "ERROR")
+                current_action = None
+                current_path = []
+                current_path_index = 0
+                waiting_for_action = False
+                if auto_mode == AUTO_MODE_FULL:
+                    action_completed = True
+                return
+        
         # Move o robô na direção do próximo passo
         current_x, current_y = robot_grid_pos
         target_x, target_y = next_pos
         
+        # Valida que o movimento é válido (apenas 1 célula de distância)
+        dx = abs(target_x - current_x)
+        dy = abs(target_y - current_y)
+        if dx + dy != 1:
+            log(f"ERRO: Movimento inválido de ({current_x}, {current_y}) para ({target_x}, {target_y}) - distância incorreta!", "ERROR")
+            current_action = None
+            current_path = []
+            current_path_index = 0
+            waiting_for_action = False
+            if auto_mode == AUTO_MODE_FULL:
+                action_completed = True
+            return
+        
+        # Tenta mover
+        old_pos = robot_grid_pos.copy()
         if target_x > current_x:
             move_robot('mr')
         elif target_x < current_x:
@@ -955,9 +998,31 @@ def execute_auto_action():
         elif target_y < current_y:
             move_robot('mu')
         
+        # Verifica se o movimento foi bem-sucedido
+        if robot_grid_pos == old_pos:
+            # Movimento falhou (provavelmente obstáculo ou bateria)
+            log(f"Movimento falhou de ({old_pos[0]}, {old_pos[1]}) para ({target_x}, {target_y})", "ERROR")
+            current_action = None
+            current_path = []
+            current_path_index = 0
+            waiting_for_action = False
+            if auto_mode == AUTO_MODE_FULL:
+                action_completed = True
+            return
+        
         # Verifica se chegou na posição
         if robot_grid_pos[0] == target_x and robot_grid_pos[1] == target_y:
             current_path_index += 1
+        else:
+            # Robô não chegou na posição esperada - algo deu errado
+            log(f"ERRO: Robô não chegou na posição esperada. Esperado: ({target_x}, {target_y}), Atual: ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "ERROR")
+            current_action = None
+            current_path = []
+            current_path_index = 0
+            waiting_for_action = False
+            if auto_mode == AUTO_MODE_FULL:
+                action_completed = True
+            return
     
     # Se completou o caminho, executa a ação
     # IMPORTANTE: Só executa se realmente seguiu pelo menos 2 passos do caminho
@@ -1075,6 +1140,12 @@ def update_auto_mode():
                 graph = build_graph_from_matrix(matriz2)
                 path = a_star(graph, tuple(robot_grid_pos), target_pos)
                 
+                # Valida o caminho antes de usar
+                if path and not validate_path(path):
+                    log(f"ERRO: Caminho inválido calculado para {action_type} -> ({target_pos[0]}, {target_pos[1]})! Abortando ação.", "ERROR")
+                    update_auto_mode.plan_index += 1
+                    return
+                
                 if path:
                     # No modo automático total, sempre precisa seguir um caminho real
                     # Se já está na posição, cria um caminho mínimo para garantir que "passe" pela célula
@@ -1089,13 +1160,18 @@ def update_auto_mode():
                                 if (0 <= nx < len(matriz2[0]) and 0 <= ny < len(matriz2) and
                                     matriz2[ny][nx] != '0'):
                                     # Cria caminho: posição atual -> adjacente -> posição alvo
-                                    current_path = [(nx, ny), target_pos]
-                                    current_path_index = 0
-                                    current_action = action_type
-                                    log(f"Criando caminho mínimo para passar pela célula: ({x}, {y}) -> ({nx}, {ny}) -> ({x}, {y})", "AUTO")
-                                    adjacent_found = True
-                                    # NÃO incrementa plan_index aqui - só incrementa quando ação completar
-                                    break
+                                    min_path = [(nx, ny), target_pos]
+                                    # Valida o caminho mínimo antes de usar
+                                    if validate_path(min_path):
+                                        current_path = min_path
+                                        current_path_index = 0
+                                        current_action = action_type
+                                        log(f"Criando caminho mínimo para passar pela célula: ({x}, {y}) -> ({nx}, {ny}) -> ({x}, {y})", "AUTO")
+                                        adjacent_found = True
+                                        # NÃO incrementa plan_index aqui - só incrementa quando ação completar
+                                        break
+                                    else:
+                                        log(f"ERRO: Caminho mínimo inválido criado! Tentando próxima direção...", "ERROR")
                             
                             if not adjacent_found:
                                 # Não há célula adjacente livre - pula esta ação
@@ -1112,7 +1188,13 @@ def update_auto_mode():
                             # Outras ações, pula
                             update_auto_mode.plan_index += 1
                     else:
-                        current_path = path[1:]  # Remove posição atual
+                        # Remove posição atual e valida o caminho restante
+                        remaining_path = path[1:]
+                        if not validate_path(remaining_path):
+                            log(f"ERRO: Caminho restante inválido após remover posição atual! Abortando ação.", "ERROR")
+                            update_auto_mode.plan_index += 1
+                            return
+                        current_path = remaining_path
                         current_path_index = 0
                         current_action = action_type
                         log(f"Executando ação {update_auto_mode.plan_index + 1}/{len(update_auto_mode.full_mission_plan)}: {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
@@ -1145,6 +1227,11 @@ def update_auto_mode():
                 graph = build_graph_from_matrix(matriz2)
                 path = a_star(graph, tuple(robot_grid_pos), target_pos)
                 
+                # Valida o caminho antes de usar
+                if path and not validate_path(path):
+                    log(f"ERRO: Caminho inválido calculado para {action_type} -> ({target_pos[0]}, {target_pos[1]})! Abortando ação.", "ERROR")
+                    return
+                
                 if path:
                     # Se já está na posição alvo, cria caminho mínimo para garantir que "passe" pela célula
                     if len(path) == 1:
@@ -1158,12 +1245,17 @@ def update_auto_mode():
                                 if (0 <= nx < len(matriz2[0]) and 0 <= ny < len(matriz2) and
                                     matriz2[ny][nx] != '0'):
                                     # Cria caminho: posição atual -> adjacente -> posição alvo
-                                    current_path = [(nx, ny), target_pos]
-                                    current_path_index = 0
-                                    current_action = action_type
-                                    log(f"Criando caminho mínimo (Semi-Auto) para passar pela célula: ({x}, {y}) -> ({nx}, {ny}) -> ({x}, {y})", "AUTO")
-                                    adjacent_found = True
-                                    break
+                                    min_path = [(nx, ny), target_pos]
+                                    # Valida o caminho mínimo antes de usar
+                                    if validate_path(min_path):
+                                        current_path = min_path
+                                        current_path_index = 0
+                                        current_action = action_type
+                                        log(f"Criando caminho mínimo (Semi-Auto) para passar pela célula: ({x}, {y}) -> ({nx}, {ny}) -> ({x}, {y})", "AUTO")
+                                        adjacent_found = True
+                                        break
+                                    else:
+                                        log(f"ERRO: Caminho mínimo inválido criado (Semi-Auto)! Tentando próxima direção...", "ERROR")
                             
                             if not adjacent_found:
                                 # Não há célula adjacente livre - não pode coletar sem passar pela célula
@@ -1182,7 +1274,12 @@ def update_auto_mode():
                             current_action = action_type
                             waiting_for_action = True
                     else:
-                        current_path = path[1:]  # Remove posição atual
+                        # Remove posição atual e valida o caminho restante
+                        remaining_path = path[1:]
+                        if not validate_path(remaining_path):
+                            log(f"ERRO: Caminho restante inválido após remover posição atual (Semi-Auto)! Abortando ação.", "ERROR")
+                            return
+                        current_path = remaining_path
                         current_path_index = 0
                         current_action = action_type
                         log(f"Decisão (Semi-Auto): {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
