@@ -1367,7 +1367,7 @@ def execute_auto_action():
 
 def update_auto_mode():
     """Atualiza o modo automático."""
-    global auto_mode, current_path, current_path_index, current_action, waiting_for_action, just_collected, action_completed
+    global auto_mode, current_path, current_path_index, current_action, waiting_for_action, just_collected, action_completed, last_action_time
     
     if auto_mode == AUTO_MODE_OFF:
         return
