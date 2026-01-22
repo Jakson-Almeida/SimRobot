@@ -1,5 +1,6 @@
 import pygame
 import math
+import random
 
 # Definições de cores
 WHITE = (255, 255, 255)
@@ -15,6 +16,15 @@ MARGIN = 5
 ANIMATION_SPEED = 5  # Velocidade de animação do robô
 RECHARGE_SPEED = 60  # Segundos para recarregar de 0% a 100%
 STATION_WAIT_TIME = 3000  # Tempo em milissegundos para iniciar recarga (3 segundos)
+
+# Sistema de itens
+MAX_ITEMS_PER_CELL = 2  # Máximo de itens por célula tipo '1'
+ROBOT_CAPACITY = 3  # Capacidade máxima do robô
+ITEM_TYPES = ['TYPE_A', 'TYPE_B']  # Dois tipos de itens
+ITEM_COLORS = {
+    'TYPE_A': (255, 100, 100),  # Vermelho claro
+    'TYPE_B': (100, 100, 255),  # Azul claro
+}
 
 # Matriz do ambiente
 matriz2 = [
@@ -53,6 +63,11 @@ recharge_start_time = 0  # Tempo em milissegundos quando começou a recarregar
 battery_at_recharge_start = 100  # Bateria quando começou a recarregar
 last_position = robot_grid_pos.copy()  # Última posição para detectar movimento
 
+# Sistema de itens
+# items_on_grid: {(x, y): [{'type': 'TYPE_A'}, {'type': 'TYPE_B'}, ...]}
+items_on_grid = {}
+robot_inventory = []  # Lista de itens carregados pelo robô
+
 
 def draw_grid():
     """Desenha a matriz representando o ambiente."""
@@ -77,6 +92,88 @@ def draw_grid():
 
             pygame.draw.rect(screen, color, (x, y, CELL_SIZE - MARGIN, CELL_SIZE - MARGIN))
             pygame.draw.rect(screen, BLACK, (x, y, CELL_SIZE - MARGIN, CELL_SIZE - MARGIN), 2)  # Borda
+
+
+def initialize_items_randomly():
+    """Inicializa itens aleatoriamente nas células tipo '1'."""
+    global items_on_grid
+    
+    items_on_grid = {}
+    
+    # Percorre todas as células tipo '1' e adiciona itens aleatoriamente
+    for row_idx, row in enumerate(matriz2):
+        for col_idx, cell in enumerate(row):
+            if cell == '1':  # Apenas células livres
+                # 40% de chance de ter itens nesta célula
+                if random.random() < 0.4:
+                    num_items = random.randint(1, MAX_ITEMS_PER_CELL)
+                    cell_key = (col_idx, row_idx)
+                    items_on_grid[cell_key] = []
+                    
+                    for _ in range(num_items):
+                        item_type = random.choice(ITEM_TYPES)
+                        items_on_grid[cell_key].append({'type': item_type})
+
+
+def draw_items_on_grid():
+    """Desenha os itens nas células do grid."""
+    for (x, y), items in items_on_grid.items():
+        if items:  # Só desenha se houver itens
+            cell_x = x * CELL_SIZE
+            cell_y = y * CELL_SIZE
+            
+            # Desenha pequenos círculos representando os itens
+            for i, item in enumerate(items):
+                item_color = ITEM_COLORS[item['type']]
+                # Posiciona os itens lado a lado
+                item_x = cell_x + 20 + (i * 25)
+                item_y = cell_y + 20
+                pygame.draw.circle(screen, item_color, (item_x, item_y), 8)
+                pygame.draw.circle(screen, BLACK, (item_x, item_y), 8, 2)
+
+
+def draw_robot_item_count():
+    """Desenha a quantidade de itens carregados pelo robô (canto superior direito do robô)."""
+    if len(robot_inventory) > 0:
+        # Posição no canto superior direito do robô
+        count_x = robot_real_pos[0] + CELL_SIZE - 30
+        count_y = robot_real_pos[1] + 10
+        
+        # Fundo do contador
+        pygame.draw.circle(screen, (50, 50, 50), (count_x, count_y), 15)
+        pygame.draw.circle(screen, BLACK, (count_x, count_y), 15, 2)
+        
+        # Texto com a quantidade
+        count_text = font.render(str(len(robot_inventory)), True, WHITE)
+        text_rect = count_text.get_rect(center=(count_x, count_y))
+        screen.blit(count_text, text_rect)
+
+
+def collect_item(item_index):
+    """Coleta um item específico da célula atual (item_index: 1 ou 2)."""
+    global robot_inventory, items_on_grid
+    
+    x, y = robot_grid_pos
+    cell_key = (x, y)
+    
+    # Verifica se há itens nesta célula e se o robô tem espaço
+    if cell_key in items_on_grid and len(items_on_grid[cell_key]) > 0:
+        if len(robot_inventory) < ROBOT_CAPACITY:
+            # Ajusta o índice (usuário digita 1 ou 2, mas lista começa em 0)
+            item_pos = item_index - 1
+            
+            # Verifica se o índice é válido
+            if 0 <= item_pos < len(items_on_grid[cell_key]):
+                # Remove o item da célula e adiciona ao inventário
+                item = items_on_grid[cell_key].pop(item_pos)
+                robot_inventory.append(item)
+                
+                # Remove a célula se não houver mais itens
+                if len(items_on_grid[cell_key]) == 0:
+                    del items_on_grid[cell_key]
+                
+                return True
+    return False
 
 
 def get_robot_color():
@@ -464,6 +561,9 @@ def draw_battery():
         screen.blit(status_surface, (10, HEIGHT - 80))
 
 
+# Inicializar itens aleatoriamente
+initialize_items_randomly()
+
 # Loop principal
 running = True
 clock = pygame.time.Clock()
@@ -475,8 +575,10 @@ while running:
     update_auto_recharge()
     
     draw_grid()
+    draw_items_on_grid()  # Desenha itens no grid
     animate_robot()  # Atualiza a posição do robô suavemente
     draw_robot(scale=0.45)
+    draw_robot_item_count()  # Mostra quantidade de itens carregados
     draw_battery()
 
     pygame.display.flip()
@@ -496,5 +598,11 @@ while running:
                 move_robot('mu')
             elif event.key == pygame.K_DOWN:
                 move_robot('md')
+            elif event.key == pygame.K_1:
+                # Coleta o primeiro item (índice 1)
+                collect_item(1)
+            elif event.key == pygame.K_2:
+                # Coleta o segundo item (índice 2)
+                collect_item(2)
 
 pygame.quit()
