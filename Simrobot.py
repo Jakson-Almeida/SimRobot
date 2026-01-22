@@ -862,9 +862,8 @@ def calculate_needed_battery():
     
     current_time = pygame.time.get_ticks()
     
-    # Se calculou recentemente (< 1 segundo), usa cache
+    # Se calculou recentemente (< 1 segundo), usa cache (sem log para evitar poluição)
     if cached_target_battery is not None and (current_time - last_battery_calculation_time) < 1000:
-        log(f"  Usando cache: {cached_target_battery:.1f}%", "RECHARGE")
         return cached_target_battery
     
     robot_pos = tuple(robot_grid_pos)
@@ -1484,14 +1483,22 @@ def execute_auto_action():
                 current_path_index = 0
                 log(f"Robô chegou à estação de recarga, aguardando recarga automática...", "AUTO")
             # Aguarda recarga completar
-            elif battery >= 100:
-                log(f"Ação automática COMPLETA: Recarga em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
+            # No modo automático, verifica se atingiu o target dinâmico
+            else:
+                # Calcula o target de bateria
                 if auto_mode == AUTO_MODE_FULL:
-                    action_completed = True
-                current_action = None
-                current_path = []
-                current_path_index = 0
-                waiting_for_action = False
+                    target_battery = calculate_needed_battery()
+                else:
+                    target_battery = 100
+                
+                if battery >= target_battery:
+                    log(f"Ação automática COMPLETA: Recarga em ({robot_grid_pos[0]}, {robot_grid_pos[1]}) - Target: {target_battery:.1f}%", "AUTO")
+                    if auto_mode == AUTO_MODE_FULL:
+                        action_completed = True
+                    current_action = None
+                    current_path = []
+                    current_path_index = 0
+                    waiting_for_action = False
 
 
 def update_auto_mode():
