@@ -881,8 +881,8 @@ def calculate_needed_battery():
     robot_pos = tuple(robot_grid_pos)
     items, warehouses, recharge_stations = find_all_positions()
     
-    SAFETY_MARGIN = 15  # Margem de segurança aumentada
-    MIN_BATTERY = 30  # Mínimo de bateria para garantir segurança
+    SAFETY_MARGIN = 8  # Margem de segurança reduzida (era 15%)
+    MIN_BATTERY = 20  # Mínimo de bateria reduzido (era 30%)
     
     log("=== CALCULANDO BATERIA NECESSÁRIA ===", "RECHARGE")
     
@@ -895,7 +895,7 @@ def calculate_needed_battery():
     total_cost = 0
     simulated_pos = robot_pos
     actions_simulated = 0
-    max_actions_to_simulate = 2
+    max_actions_to_simulate = 4  # Aumentado de 2 para 4 ações
     
     # Simula as próximas ações
     while actions_simulated < max_actions_to_simulate:
@@ -967,7 +967,7 @@ def decide_next_action_intelligent():
     items, warehouses, recharge_stations = find_all_positions()
     graph = build_graph_from_matrix(matriz2)
     
-    SAFETY_MARGIN = 10  # Margem de segurança de bateria
+    SAFETY_MARGIN = 6  # Margem de segurança reduzida (era 10%)
     
     log("=== ANÁLISE INTELIGENTE (MODO SEMI-AUTOMÁTICO) ===", "DECISION")
     log(f"Estado atual: Posição: ({robot_pos[0]}, {robot_pos[1]}), Bateria: {battery:.1f}%, Inventário: {len(robot_inventory)}/{ROBOT_CAPACITY}, Itens restantes: {len(items)}", "DECISION")
@@ -1057,6 +1057,12 @@ def decide_next_action_intelligent():
             nearest_item = find_nearest(robot_pos, items)
             cost_to_item = calculate_route_cost(robot_pos, nearest_item)
             
+            # OTIMIZAÇÃO: Se já está na célula com item, custo é 0!
+            if robot_pos == nearest_item:
+                log(f"  - ✅ OTIMIZAÇÃO: Robô já está na célula com item! Custo de coleta: 0%", "DECISION")
+                log(f"  - Decisão: COLETAR item adicional (mesma célula, sem custo)", "DECISION")
+                return ('collect', nearest_item, f'Coletar item na mesma célula (0% bateria)')
+            
             # Calcular custo total: coletar item -> ir ao almoxarifado -> ir à estação
             cost_item_to_warehouse = calculate_route_cost(nearest_item, nearest_warehouse)
             total_cost_collect = cost_to_item + cost_item_to_warehouse + cost_warehouse_to_recharge
@@ -1064,10 +1070,14 @@ def decide_next_action_intelligent():
             log(f"  - Custo para coletar mais item: {cost_to_item:.1f}%", "DECISION")
             log(f"  - Custo total (coletar + entregar + recarregar): {total_cost_collect:.1f}%", "DECISION")
             
-            # Se tem bateria para coletar mais, COLETA
+            # Se tem bateria para coletar mais, COLETA (margem reduzida)
             if battery >= total_cost_collect + SAFETY_MARGIN:
                 log(f"  - Decisão: COLETAR mais item (bateria suficiente: {battery:.1f}%)", "DECISION")
                 return ('collect', nearest_item, f'Coletar mais item (inventário: {len(robot_inventory)}/{ROBOT_CAPACITY})')
+            # OTIMIZAÇÃO: Se o custo é baixo e tem mais de 20%, arrisca coletar
+            elif cost_to_item <= 6 and battery >= 20:
+                log(f"  - ✅ OTIMIZAÇÃO: Item próximo ({cost_to_item:.1f}%) e bateria razoável ({battery:.1f}%), decisão: COLETAR", "DECISION")
+                return ('collect', nearest_item, f'Coletar item próximo')
             else:
                 # Não tem bateria para coletar mais, ENTREGA O QUE TEM
                 log(f"  - Decisão: ENTREGAR itens atuais (bateria insuficiente para coletar mais)", "DECISION")
@@ -1107,10 +1117,15 @@ def decide_next_action_intelligent():
             return ('collect', nearest_item, 'Coletar item')
         else:
             # Bateria insuficiente, verifica se precisa recarregar
-            # Se já está na estação de recarga, verifica se tem bateria suficiente segundo calculate_needed_battery()
+            # Se já está na estação de recarga, verifica se tem bateria suficiente
             if is_at_recharge_station():
                 needed_battery = calculate_needed_battery()
-                if battery >= needed_battery:
+                
+                # OTIMIZAÇÃO: Se tem mais de 25%, tenta coletar (ser menos conservador)
+                if battery >= 25 and battery >= needed_battery * 0.85:
+                    log(f"  - ✅ Na estação com bateria razoável ({battery:.1f}% >= 25%), decisão: COLETAR", "DECISION")
+                    return ('collect', nearest_item, 'Coletar item (bateria razoável)')
+                elif battery >= needed_battery:
                     log(f"  - Já está na estação com bateria suficiente ({battery:.1f}% >= {needed_battery:.1f}%), decisão: COLETAR", "DECISION")
                     return ('collect', nearest_item, 'Coletar item')
                 else:
