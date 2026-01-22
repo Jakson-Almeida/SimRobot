@@ -41,6 +41,7 @@ matriz2 = [
     ['1', '1', '1', '1', '1', '1', '0'],
     ['1', '1', '1', '0', '0', '1', '1'],
     ['1', 'S', '1', '1', '1', '1', '1'],
+    ['1', '0', '1', '1', '0', '1', '1'],
 ]
 
 # Definir a posição inicial do robô (encontra o 'S')
@@ -621,8 +622,11 @@ def update_auto_recharge():
         # Verifica se o robô se moveu desde a última verificação
         if robot_grid_pos == last_position:
             # Se não se moveu, incrementa o tempo na estação
-            # Para modo automático total, usa threshold. Para manual/semi, carrega até 100%
-            target_battery = RECHARGE_THRESHOLD if auto_mode == AUTO_MODE_FULL else 100
+            # Para modo automático total, calcula dinamicamente. Para manual/semi, carrega até 100%
+            if auto_mode == AUTO_MODE_FULL:
+                target_battery = calculate_needed_battery()
+            else:
+                target_battery = 100
             
             if battery >= target_battery:
                 # Se atingiu o threshold/100%, mantém a bateria e não faz nada
@@ -833,6 +837,87 @@ def calculate_route_cost(from_pos, to_pos):
     return float('inf')  # Sem caminho
 
 
+def calculate_needed_battery():
+    """
+    Calcula dinamicamente quanta bateria o robô precisa para as próximas ações.
+    Simula as próximas 2 ações e calcula o custo total + retorno à estação.
+    Retorna: bateria necessária (mínimo RECHARGE_THRESHOLD, máximo 100)
+    """
+    robot_pos = tuple(robot_grid_pos)
+    items, warehouses, recharge_stations = find_all_positions()
+    
+    SAFETY_MARGIN = 15  # Margem de segurança aumentada
+    MIN_BATTERY = 30  # Mínimo de bateria para garantir segurança
+    
+    log("=== CALCULANDO BATERIA NECESSÁRIA ===", "RECHARGE")
+    
+    # Se não há estações de recarga, retorna 100%
+    if not recharge_stations:
+        log("Sem estações de recarga, recarregando até 100%", "RECHARGE")
+        return 100
+    
+    nearest_recharge = find_nearest(robot_pos, recharge_stations)
+    total_cost = 0
+    simulated_pos = robot_pos
+    actions_simulated = 0
+    max_actions_to_simulate = 2
+    
+    # Simula as próximas ações
+    while actions_simulated < max_actions_to_simulate:
+        # Verifica o que o robô faria a partir da posição simulada
+        
+        # Se tem itens no inventário ou capacidade cheia, vai entregar
+        if len(robot_inventory) >= ROBOT_CAPACITY or (len(robot_inventory) > 0 and not items):
+            if warehouses:
+                nearest_warehouse = find_nearest(simulated_pos, warehouses)
+                cost = calculate_route_cost(simulated_pos, nearest_warehouse)
+                if cost != float('inf'):
+                    total_cost += cost
+                    simulated_pos = nearest_warehouse
+                    log(f"  Ação {actions_simulated + 1}: Entregar em {nearest_warehouse} (custo: {cost:.1f}%)", "RECHARGE")
+                    actions_simulated += 1
+                    # Após entregar, inventário fica vazio (simulação)
+                    if actions_simulated < max_actions_to_simulate and items:
+                        continue
+                    else:
+                        break
+                else:
+                    break
+        # Se não tem itens, vai coletar
+        elif items and len(robot_inventory) < ROBOT_CAPACITY:
+            nearest_item = find_nearest(simulated_pos, items)
+            cost = calculate_route_cost(simulated_pos, nearest_item)
+            if cost != float('inf'):
+                total_cost += cost
+                simulated_pos = nearest_item
+                log(f"  Ação {actions_simulated + 1}: Coletar em {nearest_item} (custo: {cost:.1f}%)", "RECHARGE")
+                actions_simulated += 1
+            else:
+                break
+        else:
+            # Não há mais ações a fazer
+            break
+    
+    # Calcula custo para voltar à estação de recarga da posição final simulada
+    cost_back_to_recharge = calculate_route_cost(simulated_pos, nearest_recharge)
+    if cost_back_to_recharge != float('inf'):
+        total_cost += cost_back_to_recharge
+        log(f"  Retorno à estação de {simulated_pos} -> {nearest_recharge} (custo: {cost_back_to_recharge:.1f}%)", "RECHARGE")
+    
+    # Bateria necessária = custo total + margem de segurança
+    needed_battery = total_cost + SAFETY_MARGIN
+    
+    # Garante mínimo e máximo
+    needed_battery = max(needed_battery, MIN_BATTERY)
+    needed_battery = min(needed_battery, 100)
+    
+    log(f"  Total de {actions_simulated} ações simuladas", "RECHARGE")
+    log(f"  Custo total estimado: {total_cost:.1f}%", "RECHARGE")
+    log(f"  Bateria necessária (com margem): {needed_battery:.1f}%", "RECHARGE")
+    
+    return needed_battery
+
+
 def decide_next_action_intelligent():
     """
     Decide a próxima ação de forma inteligente para modo semi-automático.
@@ -854,8 +939,11 @@ def decide_next_action_intelligent():
         return ('deliver', robot_pos, 'Entregar itens no almoxarifado')
     
     # Caso 2: Está na estação de recarga com bateria baixa -> RECARGA
-    # No modo automático total, só recarrega se abaixo do threshold. No manual/semi, até 100%
-    target_battery = RECHARGE_THRESHOLD if auto_mode == AUTO_MODE_FULL else 100
+    # No modo automático total, calcula dinamicamente. No manual/semi, até 100%
+    if auto_mode == AUTO_MODE_FULL:
+        target_battery = calculate_needed_battery()
+    else:
+        target_battery = 100
     
     if is_at_recharge_station() and battery < target_battery:
         log(f"Decisão: RECARREGAR (já está na estação, bateria: {battery:.1f}%, alvo: {target_battery}%)", "DECISION")
