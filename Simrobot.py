@@ -678,14 +678,18 @@ def validate_path(path):
     """Valida se um caminho contém apenas células válidas (sem obstáculos)."""
     if not path:
         return False
+    obstacle_found = False
     for pos in path:
         x, y = pos
         if not (0 <= x < len(matriz2[0]) and 0 <= y < len(matriz2)):
-            log(f"ERRO: Posição fora dos limites: ({x}, {y})", "ERROR")
+            log(f"🚫 ERRO: Posição fora dos limites: ({x}, {y})", "ERROR")
             return False
         if matriz2[y][x] == '0':
-            log(f"ERRO: Caminho contém obstáculo em ({x}, {y})", "ERROR")
+            log(f"🚫 ERRO: Caminho contém OBSTÁCULO em ({x}, {y})", "ERROR")
+            obstacle_found = True
             return False
+    if not obstacle_found:
+        log(f"✓ Validação de caminho: {len(path)} passos, SEM obstáculos", "AUTO")
     return True
 
 
@@ -1144,9 +1148,10 @@ def execute_auto_action():
         
         # VALIDAÇÃO CRÍTICA: Verifica se o próximo passo não é um obstáculo
         if (0 <= next_pos[0] < len(matriz2[0]) and 0 <= next_pos[1] < len(matriz2)):
-            if matriz2[next_pos[1]][next_pos[0]] == '0':
+            cell_type = matriz2[next_pos[1]][next_pos[0]]
+            if cell_type == '0':
                 # Próximo passo é um obstáculo! Aborta o caminho
-                log(f"ERRO CRÍTICO: Caminho contém obstáculo em ({next_pos[0]}, {next_pos[1]})! Abortando caminho.", "ERROR")
+                log(f"🚫 ERRO CRÍTICO: Próximo passo é OBSTÁCULO em ({next_pos[0]}, {next_pos[1]})! Abortando.", "ERROR")
                 current_action = None
                 current_path = []
                 current_path_index = 0
@@ -1154,6 +1159,8 @@ def execute_auto_action():
                 if auto_mode == AUTO_MODE_FULL:
                     action_completed = True
                 return
+            else:
+                log(f"✓ Validação: próximo passo ({next_pos[0]}, {next_pos[1]}) é válido (tipo: {cell_type})", "AUTO")
         
         # Move o robô na direção do próximo passo
         current_x, current_y = robot_grid_pos
@@ -1232,6 +1239,7 @@ def execute_auto_action():
                 tuple(robot_grid_pos) in items_on_grid and 
                 len(items_on_grid[tuple(robot_grid_pos)]) > 0 and
                 len(robot_inventory) < ROBOT_CAPACITY):
+                log(f"✓ Validação de coleta: Robô NA célula ({robot_grid_pos[0]}, {robot_grid_pos[1]}) = Item alvo ({target_pos[0]}, {target_pos[1]})", "AUTO")
                 collect_item(1)
                 log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]}) após passar pela célula (caminho: {len(current_path)} passos)", "AUTO")
                 just_collected = True  # Marca que acabou de coletar
