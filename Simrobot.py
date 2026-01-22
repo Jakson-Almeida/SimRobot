@@ -866,8 +866,12 @@ def decide_next_action_intelligent():
                 log(f"Decisão: RECARREGAR (bateria crítica: {battery:.1f}%, custo: {cost_to_recharge:.1f}%)", "DECISION")
                 return ('recharge', nearest_recharge, f'Bateria crítica ({battery:.1f}%), indo recarregar')
             else:
-                log(f"ALERTA: Bateria insuficiente para chegar à estação! Bateria: {battery:.1f}%, Custo: {cost_to_recharge:.1f}%", "ERROR")
-                return None
+                # EMERGÊNCIA: Bateria insuficiente para chegar à estação
+                # Tenta mover-se o máximo possível em direção à estação
+                log(f"🚨 EMERGÊNCIA: Bateria insuficiente para chegar à estação! Bateria: {battery:.1f}%, Custo: {cost_to_recharge:.1f}%", "ERROR")
+                log(f"🚨 Tentando movimento de emergência: mover-se na direção da estação o máximo possível", "DECISION")
+                # Calcula caminho e retorna mesmo sem bateria suficiente
+                return ('recharge', nearest_recharge, f'EMERGÊNCIA: Tentando chegar à estação (bateria: {battery:.1f}%)')
     
     # Caso 4: Tem itens no inventário -> ANALISAR SE DEVE ENTREGAR OU COLETAR MAIS
     if len(robot_inventory) > 0:
@@ -900,8 +904,14 @@ def decide_next_action_intelligent():
                 if battery >= cost_to_recharge + SAFETY_MARGIN:
                     return ('recharge', nearest_recharge, 'Recarregar antes de entregar (bateria insuficiente)')
                 else:
-                    log(f"ERRO: Bateria insuficiente até para recarregar! Bateria: {battery:.1f}%, Custo: {cost_to_recharge:.1f}%", "ERROR")
-                    return None
+                    # Situação crítica: tem itens mas não tem bateria nem para recarregar
+                    # Verifica se pelo menos pode entregar os itens primeiro
+                    if battery >= cost_to_warehouse + SAFETY_MARGIN:
+                        log(f"⚠️ DECISÃO DE EMERGÊNCIA: Entregar itens primeiro (bateria: {battery:.1f}%)", "DECISION")
+                        return ('deliver', nearest_warehouse, f'EMERGÊNCIA: Entregar antes de ficar sem bateria')
+                    else:
+                        log(f"🚨 EMERGÊNCIA CRÍTICA: Bateria muito baixa! Tentando mover-se em direção à estação", "ERROR")
+                        return ('recharge', nearest_recharge, f'EMERGÊNCIA: Tentando chegar à estação (bateria: {battery:.1f}%)')
         
         # Se inventário está cheio, DEVE ENTREGAR
         if len(robot_inventory) >= ROBOT_CAPACITY:
