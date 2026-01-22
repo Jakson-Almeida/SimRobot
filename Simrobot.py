@@ -757,61 +757,93 @@ def decide_next_action():
     """
     robot_pos = tuple(robot_grid_pos)
     items, warehouses, recharge_stations = find_all_positions()
+    current_time = pygame.time.get_ticks()
+    
+    # Prioridade 0: Se está no almoxarifado há mais de 3 segundos e tem itens, entregar
+    if is_at_warehouse() and len(robot_inventory) > 0:
+        if time_at_warehouse > 0:
+            time_waiting = (current_time - time_at_warehouse) / 1000.0
+            if time_waiting >= (WAREHOUSE_WAIT_TIME / 1000.0):
+                log(f"Prioridade: Entregar itens (já está no almoxarifado há {time_waiting:.1f}s)", "DECISION")
+                return ('deliver', robot_pos)  # Já está na posição
     
     # Prioridade 1: Recarregar se bateria muito baixa (< 20%)
     if battery < 20 and recharge_stations:
         nearest_recharge = find_nearest(robot_pos, recharge_stations)
         if nearest_recharge:
+            log("Prioridade: Recarregar (bateria < 20%)", "DECISION")
             return ('recharge', nearest_recharge)
     
     # Prioridade 2: Entregar se inventário cheio
     if len(robot_inventory) >= ROBOT_CAPACITY and warehouses:
         nearest_warehouse = find_nearest(robot_pos, warehouses)
         if nearest_warehouse:
-            return ('deliver', nearest_warehouse)
-    
-    # Prioridade 3: Coletar itens se houver espaço
-    if len(robot_inventory) < ROBOT_CAPACITY and items:
-        # Escolhe item mais próximo
-        nearest_item = find_nearest(robot_pos, items)
-        if nearest_item:
-            # Se já está na posição do item, verifica se pode coletar
-            if nearest_item == robot_pos:
-                # Já está na posição, verifica se há itens e espaço
-                if (nearest_item in items_on_grid and 
-                    len(items_on_grid[nearest_item]) > 0 and
-                    len(robot_inventory) < ROBOT_CAPACITY):
-                    return ('collect', nearest_item)
-                else:
-                    # Não pode coletar aqui, tenta próximo item
-                    remaining_items = [item for item in items if item != nearest_item]
-                    if remaining_items:
-                        next_item = find_nearest(robot_pos, remaining_items)
-                        if next_item:
-                            graph = build_graph_from_matrix(matriz2)
-                            path = a_star(graph, robot_pos, next_item)
-                            if path:
-                                battery_cost = estimate_battery_cost(path)
-                                if battery >= battery_cost + 10:
-                                    return ('collect', next_item)
+            # Se já está no almoxarifado, não precisa mover
+            if nearest_warehouse == robot_pos:
+                log("Prioridade: Entregar (inventário cheio, já está no almoxarifado)", "DECISION")
+                return ('deliver', robot_pos)
             else:
-                # Verifica se tem bateria suficiente para ir até o item
-                graph = build_graph_from_matrix(matriz2)
-                path = a_star(graph, robot_pos, nearest_item)
-                if path:
-                    battery_cost = estimate_battery_cost(path)
-                    if battery >= battery_cost + 10:  # Deixa margem de segurança
-                        return ('collect', nearest_item)
+                log("Prioridade: Entregar (inventário cheio)", "DECISION")
+                return ('deliver', nearest_warehouse)
     
-    # Prioridade 4: Entregar mesmo sem estar cheio (se muito próximo)
+    # Prioridade 3: Entregar se tem itens e está muito próximo do almoxarifado
     if len(robot_inventory) > 0 and warehouses:
         nearest_warehouse = find_nearest(robot_pos, warehouses)
         if nearest_warehouse:
             graph = build_graph_from_matrix(matriz2)
             path = a_star(graph, robot_pos, nearest_warehouse)
-            if path and len(path) <= 3:  # Muito próximo (3 ou menos movimentos)
+            if path and len(path) <= 2:  # Muito próximo (1-2 movimentos)
+                log(f"Prioridade: Entregar (muito próximo do almoxarifado, {len(path)-1} passos)", "DECISION")
                 return ('deliver', nearest_warehouse)
     
+    # Prioridade 4: Coletar itens se houver espaço
+    if len(robot_inventory) < ROBOT_CAPACITY and items:
+        # Filtra itens que realmente existem e podem ser coletados
+        valid_items = []
+        for item_pos in items:
+            if item_pos in items_on_grid and len(items_on_grid[item_pos]) > 0:
+                # Se já está na posição, só adiciona se realmente há itens para coletar
+                if item_pos != robot_pos:
+                    valid_items.append(item_pos)
+                elif len(robot_inventory) < ROBOT_CAPACITY:
+                    # Está na posição e pode coletar
+                    valid_items.append(item_pos)
+        
+        if valid_items:
+            nearest_item = find_nearest(robot_pos, valid_items)
+            if nearest_item:
+                # Se já está na posição do item, coleta imediatamente
+                if nearest_item == robot_pos:
+                    if (nearest_item in items_on_grid and 
+                        len(items_on_grid[nearest_item]) > 0 and
+                        len(robot_inventory) < ROBOT_CAPACITY):
+                        log("Prioridade: Coletar (já está na posição do item)", "DECISION")
+                        return ('collect', nearest_item)
+                else:
+                    # Verifica se tem bateria suficiente para ir até o item
+                    graph = build_graph_from_matrix(matriz2)
+                    path = a_star(graph, robot_pos, nearest_item)
+                    if path:
+                        battery_cost = estimate_battery_cost(path)
+                        if battery >= battery_cost + 10:  # Deixa margem de segurança
+                            log(f"Prioridade: Coletar item em ({nearest_item[0]}, {nearest_item[1]})", "DECISION")
+                            return ('collect', nearest_item)
+    
+    # Prioridade 5: Recarregar se bateria baixa (< 30%) e não há itens para coletar
+    if battery < 30 and recharge_stations and len(robot_inventory) == 0:
+        nearest_recharge = find_nearest(robot_pos, recharge_stations)
+        if nearest_recharge:
+            log("Prioridade: Recarregar (bateria < 30%, sem itens)", "DECISION")
+            return ('recharge', nearest_recharge)
+    
+    # Prioridade 6: Entregar se tem itens (última opção)
+    if len(robot_inventory) > 0 and warehouses:
+        nearest_warehouse = find_nearest(robot_pos, warehouses)
+        if nearest_warehouse:
+            log("Prioridade: Entregar (tem itens)", "DECISION")
+            return ('deliver', nearest_warehouse)
+    
+    log("Nenhuma ação disponível", "DECISION")
     return None
 
 
@@ -922,13 +954,15 @@ def execute_auto_action():
     # Se completou o caminho, executa a ação
     if current_path_index >= len(current_path):
         if current_action == 'collect':
-            # Coleta primeiro item disponível
+            # Coleta primeiro item disponível (só se realmente há itens)
             if (tuple(robot_grid_pos) in items_on_grid and 
-                len(items_on_grid[tuple(robot_grid_pos)]) > 0):
+                len(items_on_grid[tuple(robot_grid_pos)]) > 0 and
+                len(robot_inventory) < ROBOT_CAPACITY):
                 collect_item(1)
                 log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
             else:
-                log(f"Ação automática FALHOU: Nenhum item em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "ERROR")
+                log(f"Ação automática FALHOU: Não é possível coletar em ({robot_grid_pos[0]}, {robot_grid_pos[1]}) - Itens: {tuple(robot_grid_pos) in items_on_grid}, Inventário: {len(robot_inventory)}/{ROBOT_CAPACITY}", "ERROR")
+            # Sempre limpa a ação, mesmo se falhou, para evitar loop
             current_action = None
             current_path = []
             current_path_index = 0
