@@ -29,11 +29,18 @@ ITEM_COLORS = {
 }
 
 # Matriz do ambiente
+#matriz2 = [
+#    ['A', '1', '1', 'R', 'A', '1'],
+#    ['1', '1', '1', '1', '1', '1'],
+#    ['1', '1', '1', '0', '1', '1'],
+#    ['1', 'S', '1', '1', '1', '1'],
+#]
+
 matriz2 = [
-    ['A', '1', '1', 'R', 'A', '1'],
-    ['1', '1', '1', '1', '1', '1'],
-    ['1', '1', '1', '0', '1', '1'],
-    ['1', 'S', '1', '1', '1', '1'],
+    ['A', '1', '1', 'R', 'A', '1', '1'],
+    ['1', '1', '1', '1', '1', '1', '0'],
+    ['1', '1', '1', '0', '0', '1', '1'],
+    ['1', 'S', '1', '1', '1', '1', '1'],
 ]
 
 # Definir a posição inicial do robô (encontra o 'S')
@@ -1280,31 +1287,19 @@ def execute_auto_action():
             return
     
     # Se completou o caminho, executa a ação
-    # IMPORTANTE: Só executa se realmente seguiu pelo menos 2 passos do caminho
-    # Isso garante que o robô realmente "passou" pela célula, não apenas estava nela
     if current_path_index >= len(current_path) and current_path:
-        if len(current_path) < 2:
-            # Caminho muito curto - não deveria coletar sem passar pela célula
-            log(f"Ação automática IGNORADA: Caminho muito curto ({len(current_path)} passos) - robô precisa passar pela célula", "AUTO")
-            current_action = None
-            current_path = []
-            current_path_index = 0
-            waiting_for_action = False
-            if auto_mode == AUTO_MODE_FULL:
-                action_completed = True
-        elif current_action == 'collect':
+        if current_action == 'collect':
             # Verifica se realmente chegou na posição alvo do caminho
-            # O último passo do caminho é a posição alvo
             target_pos = current_path[-1] if current_path else tuple(robot_grid_pos)
             
-            # Só coleta se realmente está na posição alvo E seguiu um caminho real (>= 2 passos)
+            # Coleta se está na posição correta e tem item
             if (tuple(robot_grid_pos) == target_pos and
                 tuple(robot_grid_pos) in items_on_grid and 
                 len(items_on_grid[tuple(robot_grid_pos)]) > 0 and
                 len(robot_inventory) < ROBOT_CAPACITY):
                 log(f"✓ Validação de coleta: Robô NA célula ({robot_grid_pos[0]}, {robot_grid_pos[1]}) = Item alvo ({target_pos[0]}, {target_pos[1]})", "AUTO")
                 collect_item(1)
-                log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]}) após passar pela célula (caminho: {len(current_path)} passos)", "AUTO")
+                log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
                 just_collected = True  # Marca que acabou de coletar
                 
                 # Modo semi-automático: desativa após coletar
@@ -1469,34 +1464,30 @@ def update_auto_mode():
                 if path:
                     if len(path) == 1:
                         # Já está na posição alvo
-                        if action_type == 'collect':
-                            # Para coleta, tenta criar caminho mínimo
-                            x, y = target_pos
-                            adjacent_found = False
-                            for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-                                nx, ny = x + dx, y + dy
-                                if (0 <= nx < len(matriz2[0]) and 0 <= ny < len(matriz2) and
-                                    matriz2[ny][nx] != '0'):
-                                    min_path = [(nx, ny), target_pos]
-                                    if validate_path(min_path):
-                                        current_path = min_path
-                                        current_path_index = 0
-                                        current_action = action_type
-                                        log(f"Caminho mínimo criado para coleta: {len(min_path)} passos", "AUTO")
-                                        adjacent_found = True
-                                        break
-                            
-                            if not adjacent_found:
-                                log(f"⚠️ AVISO: Não há célula adjacente livre para coleta. Pulando ação.", "AUTO")
-                                last_action_time = current_time
-                        
-                        elif action_type in ['deliver', 'recharge']:
+                        if action_type in ['deliver', 'recharge']:
                             # Para entrega e recarga, pode executar imediatamente
                             current_path = []
                             current_path_index = 0
                             current_action = action_type
                             waiting_for_action = True
                             log(f"Iniciando {action_type} imediatamente (já está no local)", "AUTO")
+                        else:
+                            # Para coleta, também executa diretamente (já está na posição)
+                            current_path = []
+                            current_path_index = 0
+                            current_action = None
+                            
+                            # Coleta imediatamente se tiver item
+                            if (tuple(robot_grid_pos) in items_on_grid and 
+                                len(items_on_grid[tuple(robot_grid_pos)]) > 0 and
+                                len(robot_inventory) < ROBOT_CAPACITY):
+                                log(f"✓ Robô já está na célula do item ({robot_grid_pos[0]}, {robot_grid_pos[1]}), coletando diretamente", "AUTO")
+                                collect_item(1)
+                                last_action_time = current_time
+                                log("=== AÇÃO AUTOMÁTICA COMPLETA: Coleta finalizada ===", "AUTO")
+                            else:
+                                log(f"⚠️ AVISO: Robô na posição mas sem item para coletar", "AUTO")
+                                last_action_time = current_time
                     else:
                         # Remove posição atual e valida o caminho restante
                         remaining_path = path[1:]
