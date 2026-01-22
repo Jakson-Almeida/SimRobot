@@ -1296,6 +1296,10 @@ def update_auto_mode():
     if auto_mode == AUTO_MODE_OFF:
         return
     
+    # Debug: log quando entra em update_auto_mode no modo semi-automático
+    if auto_mode == AUTO_MODE_SEMI and not current_path and not waiting_for_action:
+        log(f"[DEBUG] update_auto_mode: Modo SEMI, sem caminho ativo, decidindo próxima ação...", "AUTO")
+    
     # Se acabou de coletar, aguarda uma iteração antes de processar próxima ação
     if just_collected:
         just_collected = False
@@ -1832,15 +1836,22 @@ while running:
                         log("Modo automático DESATIVADO (voltou para MANUAL)", "MODE")
                 
                 elif event.key == pygame.K_s:
-                    # Alterna modo semi-automático
+                    # Ativa modo semi-automático (sempre ativa, nunca desativa)
+                    # O modo se desativa automaticamente após completar uma ação
                     if auto_mode == AUTO_MODE_OFF:
                         auto_mode = AUTO_MODE_SEMI
-                        log("=== MODO SEMI-AUTOMÁTICO ATIVADO ===", "MODE")
-                    else:
-                        auto_mode = AUTO_MODE_OFF
+                        # Limpa resíduos de execuções anteriores
                         current_path = []
+                        current_path_index = 0
                         current_action = None
-                        log("Modo automático DESATIVADO (voltou para MANUAL)", "MODE")
+                        waiting_for_action = False
+                        log("=== MODO SEMI-AUTOMÁTICO ATIVADO ===", "MODE")
+                    elif auto_mode == AUTO_MODE_SEMI:
+                        # Se já está em modo semi-automático, ignora
+                        log("Modo semi-automático já está ativo. Aguarde a conclusão da ação atual.", "MODE")
+                    else:
+                        # Se está em modo automático total, avisa que não pode ativar semi-automático
+                        log("Não é possível ativar modo semi-automático enquanto modo automático total está ativo.", "MODE")
                 
                 # Controles normais (interrompem modo automático se usado)
                 elif event.key == pygame.K_RIGHT:
