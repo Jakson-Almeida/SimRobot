@@ -775,13 +775,33 @@ def decide_next_action():
         # Escolhe item mais próximo
         nearest_item = find_nearest(robot_pos, items)
         if nearest_item:
-            # Verifica se tem bateria suficiente
-            graph = build_graph_from_matrix(matriz2)
-            path = a_star(graph, robot_pos, nearest_item)
-            if path:
-                battery_cost = estimate_battery_cost(path)
-                if battery >= battery_cost + 10:  # Deixa margem de segurança
+            # Se já está na posição do item, verifica se pode coletar
+            if nearest_item == robot_pos:
+                # Já está na posição, verifica se há itens e espaço
+                if (nearest_item in items_on_grid and 
+                    len(items_on_grid[nearest_item]) > 0 and
+                    len(robot_inventory) < ROBOT_CAPACITY):
                     return ('collect', nearest_item)
+                else:
+                    # Não pode coletar aqui, tenta próximo item
+                    remaining_items = [item for item in items if item != nearest_item]
+                    if remaining_items:
+                        next_item = find_nearest(robot_pos, remaining_items)
+                        if next_item:
+                            graph = build_graph_from_matrix(matriz2)
+                            path = a_star(graph, robot_pos, next_item)
+                            if path:
+                                battery_cost = estimate_battery_cost(path)
+                                if battery >= battery_cost + 10:
+                                    return ('collect', next_item)
+            else:
+                # Verifica se tem bateria suficiente para ir até o item
+                graph = build_graph_from_matrix(matriz2)
+                path = a_star(graph, robot_pos, nearest_item)
+                if path:
+                    battery_cost = estimate_battery_cost(path)
+                    if battery >= battery_cost + 10:  # Deixa margem de segurança
+                        return ('collect', nearest_item)
     
     # Prioridade 4: Entregar mesmo sem estar cheio (se muito próximo)
     if len(robot_inventory) > 0 and warehouses:
@@ -969,14 +989,35 @@ def update_auto_mode():
                 path = a_star(graph, tuple(robot_grid_pos), target_pos)
                 
                 if path:
-                    current_path = path[1:]  # Remove posição atual
-                    current_path_index = 0
-                    current_action = action_type
-                    log(f"Executando ação {update_auto_mode.plan_index + 1}/{len(update_auto_mode.full_mission_plan)}: {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
-                    log(f"Caminho calculado: {len(path)} passos", "AUTO")
-                    if action_type in ['deliver', 'recharge']:
-                        waiting_for_action = True
-                    update_auto_mode.plan_index += 1
+                    # Se já está na posição alvo, executa ação imediatamente
+                    if len(path) == 1:
+                        # Já está na posição
+                        current_path = []
+                        current_path_index = 0
+                        current_action = action_type
+                        log(f"Já está na posição alvo: {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
+                        # Executa ação imediatamente
+                        if action_type == 'collect':
+                            if (tuple(robot_grid_pos) in items_on_grid and 
+                                len(items_on_grid[tuple(robot_grid_pos)]) > 0 and
+                                len(robot_inventory) < ROBOT_CAPACITY):
+                                collect_item(1)
+                                log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
+                            else:
+                                log(f"Ação automática FALHOU: Não é possível coletar em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "ERROR")
+                            current_action = None
+                        elif action_type in ['deliver', 'recharge']:
+                            waiting_for_action = True
+                        update_auto_mode.plan_index += 1
+                    else:
+                        current_path = path[1:]  # Remove posição atual
+                        current_path_index = 0
+                        current_action = action_type
+                        log(f"Executando ação {update_auto_mode.plan_index + 1}/{len(update_auto_mode.full_mission_plan)}: {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
+                        log(f"Caminho calculado: {len(path)} passos", "AUTO")
+                        if action_type in ['deliver', 'recharge']:
+                            waiting_for_action = True
+                        update_auto_mode.plan_index += 1
                 else:
                     # Sem caminho, pula esta ação
                     log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
@@ -1003,13 +1044,34 @@ def update_auto_mode():
                 path = a_star(graph, tuple(robot_grid_pos), target_pos)
                 
                 if path:
-                    current_path = path[1:]  # Remove posição atual
-                    current_path_index = 0
-                    current_action = action_type
-                    log(f"Decisão (Semi-Auto): {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
-                    log(f"Caminho calculado: {len(path)} passos", "AUTO")
-                    if action_type in ['deliver', 'recharge']:
-                        waiting_for_action = True
+                    # Se já está na posição alvo, executa ação imediatamente
+                    if len(path) == 1:
+                        # Já está na posição
+                        current_path = []
+                        current_path_index = 0
+                        current_action = action_type
+                        log(f"Já está na posição alvo (Semi-Auto): {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
+                        # Executa ação imediatamente
+                        if action_type == 'collect':
+                            if (tuple(robot_grid_pos) in items_on_grid and 
+                                len(items_on_grid[tuple(robot_grid_pos)]) > 0 and
+                                len(robot_inventory) < ROBOT_CAPACITY):
+                                collect_item(1)
+                                log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
+                            else:
+                                log(f"Ação automática FALHOU: Não é possível coletar em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "ERROR")
+                                # Se não conseguiu coletar, limpa ação para evitar loop
+                                current_action = None
+                        elif action_type in ['deliver', 'recharge']:
+                            waiting_for_action = True
+                    else:
+                        current_path = path[1:]  # Remove posição atual
+                        current_path_index = 0
+                        current_action = action_type
+                        log(f"Decisão (Semi-Auto): {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
+                        log(f"Caminho calculado: {len(path)} passos", "AUTO")
+                        if action_type in ['deliver', 'recharge']:
+                            waiting_for_action = True
                 else:
                     log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
     
