@@ -63,9 +63,13 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Simulador de Robô com Bateria e Gradiente")
 
 # Fonte para exibição de texto
-font = pygame.font.Font(None, 36)
-font_small = pygame.font.Font(None, 28)
-font_tiny = pygame.font.Font(None, 22)
+font = pygame.font.Font(None, 32)       # Reduzido de 36
+font_small = pygame.font.Font(None, 24)  # Reduzido de 28
+font_tiny = pygame.font.Font(None, 18)   # Reduzido de 22
+
+# Sistema de scroll do painel lateral
+panel_scroll_offset = 0  # Offset de scroll do painel
+panel_max_scroll = 0     # Máximo de scroll possível
 
 # Posição real do robô (para animação)
 robot_real_pos = [robot_grid_pos[0] * CELL_SIZE, robot_grid_pos[1] * CELL_SIZE]
@@ -1756,6 +1760,8 @@ def animate_robot():
 
 def draw_side_panel():
     """Desenha o painel lateral direito com todas as informações do jogo."""
+    global panel_max_scroll
+    
     panel_x = GRID_WIDTH
     panel_y = 0
     panel_bg_color = (30, 30, 40)  # Azul escuro
@@ -1765,62 +1771,63 @@ def draw_side_panel():
     pygame.draw.rect(screen, panel_bg_color, (panel_x, panel_y, PANEL_WIDTH, HEIGHT))
     pygame.draw.line(screen, panel_border_color, (panel_x, 0), (panel_x, HEIGHT), 3)
     
-    # Posição inicial para textos
-    y_offset = 20
-    x_margin = panel_x + 15
-    line_height = 35
+    # Criar superfície virtual para scroll (altura estimada)
+    virtual_height = HEIGHT + 400  # Altura extra para conteúdo
+    virtual_surface = pygame.Surface((PANEL_WIDTH, virtual_height), pygame.SRCALPHA)
+    virtual_surface.fill((0, 0, 0, 0))  # Transparente
+    
+    # Posição inicial para textos (na superfície virtual)
+    y_offset = 15
+    x_margin = 15
     
     # ========== TÍTULO ==========
-    title_text = font.render("STATUS", True, (255, 255, 255))
-    screen.blit(title_text, (x_margin, y_offset))
-    y_offset += 50
+    title_text = font_small.render("STATUS", True, (255, 255, 255))
+    virtual_surface.blit(title_text, (x_margin, y_offset))
+    y_offset += 35
     
     # ========== MODO ==========
     if auto_mode == AUTO_MODE_FULL:
         mode_text = "AUTOMÁTICO TOTAL"
         mode_color = GREEN
-        mode_icon = "🤖"
     elif auto_mode == AUTO_MODE_SEMI:
         mode_text = "SEMI-AUTOMÁTICO"
         mode_color = (255, 200, 0)
-        mode_icon = "🔄"
     else:
         mode_text = "MANUAL"
         mode_color = WHITE
-        mode_icon = "🎮"
     
-    mode_label = font_small.render("Modo:", True, (200, 200, 200))
-    screen.blit(mode_label, (x_margin, y_offset))
-    y_offset += 30
-    mode_surface = font_small.render(mode_text, True, mode_color)
-    screen.blit(mode_surface, (x_margin + 10, y_offset))
-    y_offset += 40
+    mode_label = font_tiny.render("Modo:", True, (200, 200, 200))
+    virtual_surface.blit(mode_label, (x_margin, y_offset))
+    y_offset += 22
+    mode_surface = font_tiny.render(mode_text, True, mode_color)
+    virtual_surface.blit(mode_surface, (x_margin + 8, y_offset))
+    y_offset += 28
     
     # ========== AÇÃO ATUAL ==========
     if auto_mode != AUTO_MODE_OFF and current_action:
-        action_label = font_small.render("Ação:", True, (200, 200, 200))
-        screen.blit(action_label, (x_margin, y_offset))
-        y_offset += 30
+        action_label = font_tiny.render("Ação:", True, (200, 200, 200))
+        virtual_surface.blit(action_label, (x_margin, y_offset))
+        y_offset += 22
         
         action_text = current_action.upper()
         if current_path:
             action_text += f" ({len(current_path) - current_path_index} passos)"
         action_surface = font_tiny.render(action_text, True, mode_color)
-        screen.blit(action_surface, (x_margin + 10, y_offset))
-        y_offset += 35
+        virtual_surface.blit(action_surface, (x_margin + 8, y_offset))
+        y_offset += 25
     
     # Linha separadora
-    pygame.draw.line(screen, panel_border_color, (x_margin, y_offset), (panel_x + PANEL_WIDTH - 15, y_offset), 2)
-    y_offset += 20
+    pygame.draw.line(virtual_surface, panel_border_color, (x_margin, y_offset), (PANEL_WIDTH - 15, y_offset), 1)
+    y_offset += 15
     
     # ========== BATERIA ==========
-    battery_label = font_small.render("Bateria:", True, (200, 200, 200))
-    screen.blit(battery_label, (x_margin, y_offset))
-    y_offset += 30
+    battery_label = font_tiny.render("Bateria:", True, (200, 200, 200))
+    virtual_surface.blit(battery_label, (x_margin, y_offset))
+    y_offset += 22
     
     # Barra de bateria
     bar_width = PANEL_WIDTH - 40
-    bar_height = 25
+    bar_height = 20
     bar_x = x_margin + 5
     bar_y = y_offset
     
@@ -1833,17 +1840,17 @@ def draw_side_panel():
         battery_color = RED
     
     # Borda da barra
-    pygame.draw.rect(screen, (100, 100, 100), (bar_x, bar_y, bar_width, bar_height), 2)
+    pygame.draw.rect(virtual_surface, (100, 100, 100), (bar_x, bar_y, bar_width, bar_height), 2)
     # Preenchimento da barra
     fill_width = int((bar_width - 4) * (battery / 100.0))
-    pygame.draw.rect(screen, battery_color, (bar_x + 2, bar_y + 2, fill_width, bar_height - 4))
+    pygame.draw.rect(virtual_surface, battery_color, (bar_x + 2, bar_y + 2, fill_width, bar_height - 4))
     
     # Texto da bateria
     battery_text = f"{int(battery)}%"
-    battery_surface = font_small.render(battery_text, True, WHITE)
+    battery_surface = font_tiny.render(battery_text, True, WHITE)
     battery_rect = battery_surface.get_rect(center=(bar_x + bar_width // 2, bar_y + bar_height // 2))
-    screen.blit(battery_surface, battery_rect)
-    y_offset += 35
+    virtual_surface.blit(battery_surface, battery_rect)
+    y_offset += 28
     
     # Status de recarga
     if is_recharging:
@@ -1852,100 +1859,80 @@ def draw_side_panel():
         elapsed_time = (pygame.time.get_ticks() - recharge_start_time) / 1000.0
         time_remaining = max(0, time_needed - elapsed_time)
         
-        status_text = f"⚡ Recarregando..."
+        status_text = f"⚡ Recarregando... ({time_remaining:.1f}s)"
         status_surface = font_tiny.render(status_text, True, GREEN)
-        screen.blit(status_surface, (x_margin + 10, y_offset))
-        y_offset += 25
-        
-        time_text = f"({time_remaining:.1f}s restantes)"
-        time_surface = font_tiny.render(time_text, True, (150, 255, 150))
-        screen.blit(time_surface, (x_margin + 10, y_offset))
-        y_offset += 30
+        virtual_surface.blit(status_surface, (x_margin + 8, y_offset))
+        y_offset += 22
     elif is_at_recharge_station() and not is_recharging and battery < 100:
         wait_time = (pygame.time.get_ticks() - time_at_station) / 1000.0 if time_at_station > 0 else 0
         wait_remaining = max(0, (STATION_WAIT_TIME / 1000.0) - wait_time)
         
-        status_text = f"⏳ Aguardando..."
+        status_text = f"⏳ Aguardando... ({wait_remaining:.1f}s)"
         status_surface = font_tiny.render(status_text, True, (255, 255, 0))
-        screen.blit(status_surface, (x_margin + 10, y_offset))
-        y_offset += 25
-        
-        time_text = f"({wait_remaining:.1f}s)"
-        time_surface = font_tiny.render(time_text, True, (255, 255, 150))
-        screen.blit(time_surface, (x_margin + 10, y_offset))
-        y_offset += 30
+        virtual_surface.blit(status_surface, (x_margin + 8, y_offset))
+        y_offset += 22
     
     # Linha separadora
-    pygame.draw.line(screen, panel_border_color, (x_margin, y_offset), (panel_x + PANEL_WIDTH - 15, y_offset), 2)
-    y_offset += 20
+    pygame.draw.line(virtual_surface, panel_border_color, (x_margin, y_offset), (PANEL_WIDTH - 15, y_offset), 1)
+    y_offset += 15
     
     # ========== INVENTÁRIO ==========
-    inventory_label = font_small.render("Inventário:", True, (200, 200, 200))
-    screen.blit(inventory_label, (x_margin, y_offset))
-    y_offset += 30
+    inventory_label = font_tiny.render("Inventário:", True, (200, 200, 200))
+    virtual_surface.blit(inventory_label, (x_margin, y_offset))
+    y_offset += 22
     
     inventory_text = f"{len(robot_inventory)}/{ROBOT_CAPACITY} itens"
     inventory_color = (255, 200, 0) if len(robot_inventory) > 0 else WHITE
-    inventory_surface = font_small.render(inventory_text, True, inventory_color)
-    screen.blit(inventory_surface, (x_margin + 10, y_offset))
-    y_offset += 35
+    inventory_surface = font_tiny.render(inventory_text, True, inventory_color)
+    virtual_surface.blit(inventory_surface, (x_margin + 8, y_offset))
+    y_offset += 25
     
     # Status de entrega
     if is_delivering:
         items_remaining = len(robot_inventory)
-        status_text = f"📦 Entregando..."
+        status_text = f"📦 Entregando... ({items_remaining} itens)"
         status_surface = font_tiny.render(status_text, True, GREEN)
-        screen.blit(status_surface, (x_margin + 10, y_offset))
-        y_offset += 25
-        
-        items_text = f"({items_remaining} restantes)"
-        items_surface = font_tiny.render(items_text, True, (150, 255, 150))
-        screen.blit(items_surface, (x_margin + 10, y_offset))
-        y_offset += 30
+        virtual_surface.blit(status_surface, (x_margin + 8, y_offset))
+        y_offset += 22
     elif is_at_warehouse() and len(robot_inventory) > 0 and not is_delivering:
         wait_time = (pygame.time.get_ticks() - time_at_warehouse) / 1000.0 if time_at_warehouse > 0 else 0
         wait_remaining = max(0, (WAREHOUSE_WAIT_TIME / 1000.0) - wait_time)
         
-        status_text = f"⏳ Aguardando..."
+        status_text = f"⏳ Aguardando... ({wait_remaining:.1f}s)"
         status_surface = font_tiny.render(status_text, True, (255, 200, 0))
-        screen.blit(status_surface, (x_margin + 10, y_offset))
-        y_offset += 25
-        
-        time_text = f"({wait_remaining:.1f}s)"
-        time_surface = font_tiny.render(time_text, True, (255, 255, 150))
-        screen.blit(time_surface, (x_margin + 10, y_offset))
-        y_offset += 30
+        virtual_surface.blit(status_surface, (x_margin + 8, y_offset))
+        y_offset += 22
     
     # Linha separadora
-    pygame.draw.line(screen, panel_border_color, (x_margin, y_offset), (panel_x + PANEL_WIDTH - 15, y_offset), 2)
-    y_offset += 20
+    pygame.draw.line(virtual_surface, panel_border_color, (x_margin, y_offset), (PANEL_WIDTH - 15, y_offset), 1)
+    y_offset += 15
     
     # ========== ESTATÍSTICAS ==========
-    stats_label = font_small.render("Estatísticas:", True, (200, 200, 200))
-    screen.blit(stats_label, (x_margin, y_offset))
-    y_offset += 30
+    stats_label = font_tiny.render("Estatísticas:", True, (200, 200, 200))
+    virtual_surface.blit(stats_label, (x_margin, y_offset))
+    y_offset += 22
     
     # Itens entregues
     delivered_text = f"✓ Entregues: {items_delivered_count}"
     delivered_surface = font_tiny.render(delivered_text, True, (150, 255, 150))
-    screen.blit(delivered_surface, (x_margin + 10, y_offset))
-    y_offset += 30
+    virtual_surface.blit(delivered_surface, (x_margin + 8, y_offset))
+    y_offset += 22
     
     # Itens restantes
     items_remaining = sum(len(items) for items in items_on_grid.values())
     remaining_text = f"○ No ambiente: {items_remaining}"
     remaining_surface = font_tiny.render(remaining_text, True, (255, 255, 150))
-    screen.blit(remaining_surface, (x_margin + 10, y_offset))
-    y_offset += 35
+    virtual_surface.blit(remaining_surface, (x_margin + 8, y_offset))
+    y_offset += 25
     
     # Linha separadora
-    pygame.draw.line(screen, panel_border_color, (x_margin, y_offset), (panel_x + PANEL_WIDTH - 15, y_offset), 2)
-    y_offset += 20
+    pygame.draw.line(virtual_surface, panel_border_color, (x_margin, y_offset), (PANEL_WIDTH - 15, y_offset), 1)
+    y_offset += 15
     
     # ========== CONTROLES ==========
-    controls_label = font_small.render("Controles:", True, (200, 200, 200))
-    screen.blit(controls_label, (x_margin, y_offset))
-    y_offset += 30
+    controls_label = font_tiny.render("Controles:", True, (200, 200, 200))
+    virtual_surface.blit(controls_label, (x_margin, y_offset))
+    y_offset += 22
     
     controls = [
         ("Setas", "Mover robô"),
@@ -1957,11 +1944,38 @@ def draw_side_panel():
     
     for key, desc in controls:
         key_surface = font_tiny.render(f"{key}:", True, (200, 200, 255))
-        screen.blit(key_surface, (x_margin + 10, y_offset))
+        virtual_surface.blit(key_surface, (x_margin + 8, y_offset))
         
         desc_surface = font_tiny.render(desc, True, (180, 180, 180))
-        screen.blit(desc_surface, (x_margin + 80, y_offset))
-        y_offset += 25
+        virtual_surface.blit(desc_surface, (x_margin + 65, y_offset))
+        y_offset += 20
+    
+    # Total de conteúdo
+    total_content_height = y_offset + 20
+    
+    # Calcula o máximo de scroll
+    panel_max_scroll = max(0, total_content_height - HEIGHT)
+    
+    # Desenha a parte visível da superfície virtual no painel
+    visible_area = pygame.Rect(0, panel_scroll_offset, PANEL_WIDTH, HEIGHT)
+    screen.blit(virtual_surface, (panel_x, panel_y), visible_area)
+    
+    # Desenha indicadores de scroll se necessário
+    if panel_max_scroll > 0:
+        # Seta para cima (se não está no topo)
+        if panel_scroll_offset > 0:
+            arrow_up = font_tiny.render("▲", True, (200, 200, 255))
+            screen.blit(arrow_up, (panel_x + PANEL_WIDTH - 25, 5))
+        
+        # Seta para baixo (se não está no final)
+        if panel_scroll_offset < panel_max_scroll:
+            arrow_down = font_tiny.render("▼", True, (200, 200, 255))
+            screen.blit(arrow_down, (panel_x + PANEL_WIDTH - 25, HEIGHT - 25))
+        
+        # Barra de scroll lateral
+        scroll_bar_height = max(30, int(HEIGHT * (HEIGHT / total_content_height)))
+        scroll_bar_y = int((HEIGHT - scroll_bar_height) * (panel_scroll_offset / panel_max_scroll))
+        pygame.draw.rect(screen, (150, 150, 170), (panel_x + PANEL_WIDTH - 8, scroll_bar_y, 6, scroll_bar_height), border_radius=3)
 
 
 def draw_battery():
@@ -2162,6 +2176,11 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        
+        elif event.type == pygame.MOUSEWHEEL:
+            # Scroll do painel lateral
+            scroll_amount = -event.y * 25  # Inverte e multiplica para suavizar
+            panel_scroll_offset = max(0, min(panel_max_scroll, panel_scroll_offset + scroll_amount))
 
         elif event.type == pygame.KEYDOWN:
             if game_state == "playing":
