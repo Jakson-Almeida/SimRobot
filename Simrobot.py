@@ -759,13 +759,19 @@ def decide_next_action():
     items, warehouses, recharge_stations = find_all_positions()
     current_time = pygame.time.get_ticks()
     
-    # Prioridade 0: Se está no almoxarifado há mais de 3 segundos e tem itens, entregar
+    # Prioridade 0: Se está no almoxarifado com itens, sempre decidir entregar
+    # O sistema de entrega automática gerencia o tempo de espera de 3 segundos
     if is_at_warehouse() and len(robot_inventory) > 0:
-        if time_at_warehouse > 0:
-            time_waiting = (current_time - time_at_warehouse) / 1000.0
-            if time_waiting >= (WAREHOUSE_WAIT_TIME / 1000.0):
-                log(f"Prioridade: Entregar itens (já está no almoxarifado há {time_waiting:.1f}s)", "DECISION")
-                return ('deliver', robot_pos)  # Já está na posição
+        if not is_delivering:
+            if time_at_warehouse > 0:
+                time_waiting = (current_time - time_at_warehouse) / 1000.0
+                if time_waiting >= (WAREHOUSE_WAIT_TIME / 1000.0):
+                    log(f"Prioridade: Entregar itens (já está no almoxarifado há {time_waiting:.1f}s)", "DECISION")
+                else:
+                    log(f"Prioridade: Entregar itens (aguardando {WAREHOUSE_WAIT_TIME/1000.0 - time_waiting:.1f}s no almoxarifado)", "DECISION")
+            else:
+                log(f"Prioridade: Entregar itens (acabou de chegar no almoxarifado)", "DECISION")
+            return ('deliver', robot_pos)  # Já está na posição, entrega será automática após 3s
     
     # Prioridade 1: Recarregar se bateria muito baixa (< 20%)
     if battery < 20 and recharge_stations:
@@ -1001,9 +1007,17 @@ def update_auto_mode():
         if current_action == 'deliver' and len(robot_inventory) == 0:
             waiting_for_action = False
             current_action = None
+            current_path = []
+            current_path_index = 0
+            log("Entrega completa, decidindo próxima ação...", "AUTO")
+            # Continua para decidir próxima ação
         elif current_action == 'recharge' and battery >= 100:
             waiting_for_action = False
             current_action = None
+            current_path = []
+            current_path_index = 0
+            log("Recarga completa, decidindo próxima ação...", "AUTO")
+            # Continua para decidir próxima ação
         else:
             return  # Continua esperando
     
@@ -1096,7 +1110,11 @@ def update_auto_mode():
                                 log(f"Ação automática FALHOU: Não é possível coletar em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "ERROR")
                                 # Se não conseguiu coletar, limpa ação para evitar loop
                                 current_action = None
-                        elif action_type in ['deliver', 'recharge']:
+                        elif action_type == 'deliver':
+                            # Se já está no almoxarifado, apenas espera a entrega automática
+                            waiting_for_action = True
+                        elif action_type == 'recharge':
+                            # Se já está na estação, apenas espera a recarga automática
                             waiting_for_action = True
                     else:
                         current_path = path[1:]  # Remove posição atual
