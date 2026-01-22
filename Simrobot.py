@@ -1266,8 +1266,14 @@ def execute_auto_action():
         
         elif current_action == 'deliver':
             # Entrega será automática quando chegar no almoxarifado
+            # Define waiting_for_action para aguardar o sistema automático de entrega
+            if not waiting_for_action:
+                waiting_for_action = True
+                current_path = []
+                current_path_index = 0
+                log(f"Robô chegou ao almoxarifado, aguardando entrega automática...", "AUTO")
             # Aguarda entrega completar
-            if len(robot_inventory) == 0:
+            elif len(robot_inventory) == 0:
                 log(f"Ação automática COMPLETA: Entrega em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
                 if auto_mode == AUTO_MODE_FULL:
                     action_completed = True
@@ -1278,8 +1284,14 @@ def execute_auto_action():
         
         elif current_action == 'recharge':
             # Recarga será automática quando chegar na estação
+            # Define waiting_for_action para aguardar o sistema automático de recarga
+            if not waiting_for_action:
+                waiting_for_action = True
+                current_path = []
+                current_path_index = 0
+                log(f"Robô chegou à estação de recarga, aguardando recarga automática...", "AUTO")
             # Aguarda recarga completar
-            if battery >= 100:
+            elif battery >= 100:
                 log(f"Ação automática COMPLETA: Recarga em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
                 if auto_mode == AUTO_MODE_FULL:
                     action_completed = True
@@ -1427,8 +1439,8 @@ def update_auto_mode():
                         current_action = action_type
                         log(f"Executando ação {update_auto_mode.plan_index + 1}/{len(update_auto_mode.full_mission_plan)}: {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
                         log(f"Caminho calculado: {len(path)} passos", "AUTO")
-                        if action_type in ['deliver', 'recharge']:
-                            waiting_for_action = True
+                        # NÃO define waiting_for_action aqui - só define quando chegar ao destino
+                        # waiting_for_action será definido em execute_auto_action() quando completar o caminho
                         # NÃO incrementa plan_index aqui - só incrementa quando ação completar
                 else:
                     # Sem caminho, pula esta ação
@@ -1518,8 +1530,8 @@ def update_auto_mode():
                             current_action = action_type
                             log(f"Decisão (Semi-Auto): {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
                             log(f"Caminho calculado: {len(path)} passos", "AUTO")
-                            if action_type in ['deliver', 'recharge']:
-                                waiting_for_action = True
+                            # NÃO define waiting_for_action aqui - só define quando chegar ao destino
+                            # waiting_for_action será definido em execute_auto_action() quando completar o caminho
                     else:
                         log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
                         auto_mode = AUTO_MODE_OFF
@@ -1532,7 +1544,10 @@ def update_auto_mode():
     
     # Executa ação atual
     if current_path:
+        log(f"[DEBUG] Executando ação: current_path={current_path}, current_path_index={current_path_index}, current_action={current_action}", "AUTO")
         execute_auto_action()
+    elif auto_mode == AUTO_MODE_SEMI:
+        log(f"[DEBUG] Modo semi-automático ativo mas sem caminho! waiting_for_action={waiting_for_action}, current_action={current_action}", "AUTO")
 
 
 def animate_robot():
