@@ -777,21 +777,23 @@ def decide_next_action():
     current_time = pygame.time.get_ticks()
     
     # Prioridade 0: Se está no almoxarifado com itens, sempre decidir entregar
-    # O sistema de entrega automática gerencia o tempo de espera de 3 segundos
+    # Não precisa calcular rota, já está no local
     if is_at_warehouse() and len(robot_inventory) > 0:
-        if not is_delivering:
-            if time_at_warehouse > 0:
-                time_waiting = (current_time - time_at_warehouse) / 1000.0
-                if time_waiting >= (WAREHOUSE_WAIT_TIME / 1000.0):
-                    log(f"Prioridade: Entregar itens (já está no almoxarifado há {time_waiting:.1f}s)", "DECISION")
-                else:
-                    log(f"Prioridade: Entregar itens (aguardando {WAREHOUSE_WAIT_TIME/1000.0 - time_waiting:.1f}s no almoxarifado)", "DECISION")
-            else:
-                log(f"Prioridade: Entregar itens (acabou de chegar no almoxarifado)", "DECISION")
-            return ('deliver', robot_pos)  # Já está na posição, entrega será automática após 3s
+        log(f"Prioridade: Entregar itens (já está no almoxarifado com {len(robot_inventory)} itens)", "DECISION")
+        return ('deliver', robot_pos)  # Já está na posição, entrega será automática após 3s
+    
+    # Prioridade 0.5: Se está na estação de recarga com bateria baixa, sempre decidir recarregar
+    # Não precisa calcular rota, já está no local
+    if is_at_recharge_station() and battery < 100:
+        log(f"Prioridade: Recarregar (já está na estação de recarga, bateria: {battery:.1f}%)", "DECISION")
+        return ('recharge', robot_pos)  # Já está na posição, recarga será automática após 3s
     
     # Prioridade 1: Recarregar se bateria muito baixa (< 20%)
     if battery < 20 and recharge_stations:
+        # Verifica se já está em uma estação de recarga
+        if is_at_recharge_station():
+            log("Prioridade: Recarregar (bateria < 20%, já está na estação)", "DECISION")
+            return ('recharge', robot_pos)
         nearest_recharge = find_nearest(robot_pos, recharge_stations)
         if nearest_recharge:
             log("Prioridade: Recarregar (bateria < 20%)", "DECISION")
@@ -799,18 +801,21 @@ def decide_next_action():
     
     # Prioridade 2: Entregar se inventário cheio
     if len(robot_inventory) >= ROBOT_CAPACITY and warehouses:
+        # Verifica se já está no almoxarifado
+        if is_at_warehouse():
+            log("Prioridade: Entregar (inventário cheio, já está no almoxarifado)", "DECISION")
+            return ('deliver', robot_pos)
         nearest_warehouse = find_nearest(robot_pos, warehouses)
         if nearest_warehouse:
-            # Se já está no almoxarifado, não precisa mover
-            if nearest_warehouse == robot_pos:
-                log("Prioridade: Entregar (inventário cheio, já está no almoxarifado)", "DECISION")
-                return ('deliver', robot_pos)
-            else:
-                log("Prioridade: Entregar (inventário cheio)", "DECISION")
-                return ('deliver', nearest_warehouse)
+            log("Prioridade: Entregar (inventário cheio)", "DECISION")
+            return ('deliver', nearest_warehouse)
     
     # Prioridade 3: Entregar se tem itens e está muito próximo do almoxarifado
     if len(robot_inventory) > 0 and warehouses:
+        # Se já está no almoxarifado, não precisa calcular rota
+        if is_at_warehouse():
+            log("Prioridade: Entregar (tem itens, já está no almoxarifado)", "DECISION")
+            return ('deliver', robot_pos)
         nearest_warehouse = find_nearest(robot_pos, warehouses)
         if nearest_warehouse:
             graph = build_graph_from_matrix(matriz2)
@@ -825,17 +830,12 @@ def decide_next_action():
         valid_items = []
         for item_pos in items:
             if item_pos in items_on_grid and len(items_on_grid[item_pos]) > 0:
-                # Se já está na posição, só adiciona se realmente há itens para coletar
-                if item_pos != robot_pos:
-                    valid_items.append(item_pos)
-                elif len(robot_inventory) < ROBOT_CAPACITY:
-                    # Está na posição e pode coletar
-                    valid_items.append(item_pos)
+                valid_items.append(item_pos)
         
         if valid_items:
             nearest_item = find_nearest(robot_pos, valid_items)
             if nearest_item:
-                # Se já está na posição do item, coleta imediatamente
+                # Se já está na posição do item, pode coletar
                 if nearest_item == robot_pos:
                     if (nearest_item in items_on_grid and 
                         len(items_on_grid[nearest_item]) > 0 and
@@ -854,6 +854,10 @@ def decide_next_action():
     
     # Prioridade 5: Recarregar se bateria baixa (< 30%) e não há itens para coletar
     if battery < 30 and recharge_stations and len(robot_inventory) == 0:
+        # Verifica se já está em uma estação de recarga
+        if is_at_recharge_station():
+            log("Prioridade: Recarregar (bateria < 30%, já está na estação)", "DECISION")
+            return ('recharge', robot_pos)
         nearest_recharge = find_nearest(robot_pos, recharge_stations)
         if nearest_recharge:
             log("Prioridade: Recarregar (bateria < 30%, sem itens)", "DECISION")
@@ -861,12 +865,32 @@ def decide_next_action():
     
     # Prioridade 6: Entregar se tem itens (última opção)
     if len(robot_inventory) > 0 and warehouses:
+        # Se já está no almoxarifado, não precisa calcular rota
+        if is_at_warehouse():
+            log("Prioridade: Entregar (tem itens, já está no almoxarifado)", "DECISION")
+            return ('deliver', robot_pos)
         nearest_warehouse = find_nearest(robot_pos, warehouses)
         if nearest_warehouse:
             log("Prioridade: Entregar (tem itens)", "DECISION")
             return ('deliver', nearest_warehouse)
     
-    log("Nenhuma ação disponível", "DECISION")
+    # Prioridade 7: Recarregar se bateria não está cheia e há estações disponíveis
+    if battery < 100 and recharge_stations:
+        # Se já está em uma estação de recarga, não precisa calcular rota
+        if is_at_recharge_station():
+            log(f"Prioridade: Recarregar (bateria: {battery:.1f}%, já está na estação)", "DECISION")
+            return ('recharge', robot_pos)
+        nearest_recharge = find_nearest(robot_pos, recharge_stations)
+        if nearest_recharge:
+            log(f"Prioridade: Recarregar (bateria: {battery:.1f}%)", "DECISION")
+            return ('recharge', nearest_recharge)
+    
+    # Se chegou aqui, realmente não há trabalho a fazer
+    # Verifica se todos os itens foram coletados
+    if not items and len(robot_inventory) == 0:
+        log("Nenhuma ação disponível: Todos os itens foram coletados e entregues!", "DECISION")
+    else:
+        log(f"Nenhuma ação disponível: Itens restantes: {len(items)}, Inventário: {len(robot_inventory)}, Bateria: {battery:.1f}%", "DECISION")
     return None
 
 
@@ -1224,70 +1248,75 @@ def update_auto_mode():
             action = decide_next_action()
             if action:
                 action_type, target_pos = action
-                graph = build_graph_from_matrix(matriz2)
-                path = a_star(graph, tuple(robot_grid_pos), target_pos)
                 
-                # Valida o caminho antes de usar
-                if path and not validate_path(path):
-                    log(f"ERRO: Caminho inválido calculado para {action_type} -> ({target_pos[0]}, {target_pos[1]})! Abortando ação.", "ERROR")
-                    return
-                
-                if path:
-                    # Se já está na posição alvo, cria caminho mínimo para garantir que "passe" pela célula
-                    if len(path) == 1:
-                        # Já está na posição - cria caminho mínimo
-                        if action_type == 'collect':
-                            # Tenta encontrar uma célula adjacente livre para fazer o movimento
-                            x, y = target_pos
-                            adjacent_found = False
-                            for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-                                nx, ny = x + dx, y + dy
-                                if (0 <= nx < len(matriz2[0]) and 0 <= ny < len(matriz2) and
-                                    matriz2[ny][nx] != '0'):
-                                    # Cria caminho: posição atual -> adjacente -> posição alvo
-                                    min_path = [(nx, ny), target_pos]
-                                    # Valida o caminho mínimo antes de usar
-                                    if validate_path(min_path):
-                                        current_path = min_path
-                                        current_path_index = 0
-                                        current_action = action_type
-                                        log(f"Criando caminho mínimo (Semi-Auto) para passar pela célula: ({x}, {y}) -> ({nx}, {ny}) -> ({x}, {y})", "AUTO")
-                                        adjacent_found = True
-                                        break
-                                    else:
-                                        log(f"ERRO: Caminho mínimo inválido criado (Semi-Auto)! Tentando próxima direção...", "ERROR")
-                            
-                            if not adjacent_found:
-                                # Não há célula adjacente livre - não pode coletar sem passar pela célula
-                                log(f"Ação automática PULADA (Semi-Auto): Não há célula adjacente livre em ({target_pos[0]}, {target_pos[1]})", "AUTO")
-                                current_action = None
-                        elif action_type == 'deliver':
-                            # Se já está no almoxarifado, apenas espera a entrega automática
-                            current_path = []
-                            current_path_index = 0
-                            current_action = action_type
-                            waiting_for_action = True
-                        elif action_type == 'recharge':
-                            # Se já está na estação, apenas espera a recarga automática
-                            current_path = []
-                            current_path_index = 0
-                            current_action = action_type
-                            waiting_for_action = True
-                    else:
-                        # Remove posição atual e valida o caminho restante
-                        remaining_path = path[1:]
-                        if not validate_path(remaining_path):
-                            log(f"ERRO: Caminho restante inválido após remover posição atual (Semi-Auto)! Abortando ação.", "ERROR")
-                            return
-                        current_path = remaining_path
-                        current_path_index = 0
-                        current_action = action_type
-                        log(f"Decisão (Semi-Auto): {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
-                        log(f"Caminho calculado: {len(path)} passos", "AUTO")
-                        if action_type in ['deliver', 'recharge']:
-                            waiting_for_action = True
+                # Se já está na posição alvo para entregar ou recarregar, não precisa calcular rota
+                if action_type in ['deliver', 'recharge'] and tuple(robot_grid_pos) == target_pos:
+                    # Já está no local necessário, apenas aguarda a ação automática
+                    current_path = []
+                    current_path_index = 0
+                    current_action = action_type
+                    waiting_for_action = True
+                    log(f"Ação (Semi-Auto): {action_type} - já está no local, aguardando ação automática", "AUTO")
                 else:
-                    log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
+                    # Precisa se mover até o alvo
+                    graph = build_graph_from_matrix(matriz2)
+                    path = a_star(graph, tuple(robot_grid_pos), target_pos)
+                    
+                    # Valida o caminho antes de usar
+                    if path and not validate_path(path):
+                        log(f"ERRO: Caminho inválido calculado para {action_type} -> ({target_pos[0]}, {target_pos[1]})! Abortando ação.", "ERROR")
+                        return
+                    
+                    if path:
+                        # Se já está na posição alvo, cria caminho mínimo para garantir que "passe" pela célula
+                        if len(path) == 1:
+                            # Já está na posição - cria caminho mínimo
+                            if action_type == 'collect':
+                                # Tenta encontrar uma célula adjacente livre para fazer o movimento
+                                x, y = target_pos
+                                adjacent_found = False
+                                for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                                    nx, ny = x + dx, y + dy
+                                    if (0 <= nx < len(matriz2[0]) and 0 <= ny < len(matriz2) and
+                                        matriz2[ny][nx] != '0'):
+                                        # Cria caminho: posição atual -> adjacente -> posição alvo
+                                        min_path = [(nx, ny), target_pos]
+                                        # Valida o caminho mínimo antes de usar
+                                        if validate_path(min_path):
+                                            current_path = min_path
+                                            current_path_index = 0
+                                            current_action = action_type
+                                            log(f"Criando caminho mínimo (Semi-Auto) para passar pela célula: ({x}, {y}) -> ({nx}, {ny}) -> ({x}, {y})", "AUTO")
+                                            adjacent_found = True
+                                            break
+                                        else:
+                                            log(f"ERRO: Caminho mínimo inválido criado (Semi-Auto)! Tentando próxima direção...", "ERROR")
+                                
+                                if not adjacent_found:
+                                    # Não há célula adjacente livre - não pode coletar sem passar pela célula
+                                    log(f"Ação automática PULADA (Semi-Auto): Não há célula adjacente livre em ({target_pos[0]}, {target_pos[1]})", "AUTO")
+                                    current_action = None
+                        else:
+                            # Remove posição atual e valida o caminho restante
+                            remaining_path = path[1:]
+                            if not validate_path(remaining_path):
+                                log(f"ERRO: Caminho restante inválido após remover posição atual (Semi-Auto)! Abortando ação.", "ERROR")
+                                return
+                            current_path = remaining_path
+                            current_path_index = 0
+                            current_action = action_type
+                            log(f"Decisão (Semi-Auto): {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
+                            log(f"Caminho calculado: {len(path)} passos", "AUTO")
+                            if action_type in ['deliver', 'recharge']:
+                                waiting_for_action = True
+                    else:
+                        log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
+            else:
+                # decide_next_action() retornou None - não há ação disponível
+                # Mas verifica se realmente não há trabalho a fazer
+                items, _, _ = find_all_positions()
+                if items or len(robot_inventory) > 0 or battery < 100:
+                    log(f"ATENÇÃO: Modo semi-automático ativo mas nenhuma ação foi decidida! Itens: {len(items)}, Inventário: {len(robot_inventory)}, Bateria: {battery:.1f}%", "ERROR")
     
     # Executa ação atual
     if current_path:
