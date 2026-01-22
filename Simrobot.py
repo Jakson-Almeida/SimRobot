@@ -107,6 +107,10 @@ AUTO_ACTION_DELAY = 300  # Pausa de 300ms entre ações no modo automático tota
 last_action_time = 0  # Tempo da última ação completada
 RECHARGE_THRESHOLD = 85  # Porcentagem de bateria suficiente para parar de recarregar
 
+# Cache para recarga dinâmica
+cached_target_battery = None  # Cache do target calculado
+last_battery_calculation_time = 0  # Última vez que calculou
+
 # Sistema de logs
 showLogs = True  # Controla se os logs são exibidos no terminal
 
@@ -296,6 +300,7 @@ def update_auto_delivery():
                             current_action = None
                             current_path = []
                             last_action_time = current_time  # Marca tempo para delay de 300ms
+                            invalidate_battery_cache()  # Invalida cache para recalcular bateria necessária
                             
                             if items_remaining == 0:
                                 log("=== AÇÃO AUTOMÁTICA COMPLETA: Todos os itens foram entregues! ===", "AUTO")
@@ -639,6 +644,7 @@ def update_auto_recharge():
                         current_action = None
                         current_path = []
                         last_action_time = current_time  # Marca tempo para delay de 300ms
+                        invalidate_battery_cache()  # Invalida cache para recalcular bateria necessária
                         log("=== AÇÃO AUTOMÁTICA COMPLETA: Recarga finalizada ===", "AUTO")
                 
                 battery = min(battery, 100)  # Garante que não ultrapasse 100%
@@ -683,6 +689,7 @@ def update_auto_recharge():
                             current_action = None
                             current_path = []
                             last_action_time = current_time  # Marca tempo para delay de 300ms
+                            invalidate_battery_cache()  # Invalida cache para recalcular bateria necessária
                             log("=== AÇÃO AUTOMÁTICA COMPLETA: Recarga finalizada ===", "AUTO")
                     
                     is_recharging = False
@@ -837,12 +844,29 @@ def calculate_route_cost(from_pos, to_pos):
     return float('inf')  # Sem caminho
 
 
+def invalidate_battery_cache():
+    """Invalida o cache de bateria necessária."""
+    global cached_target_battery
+    cached_target_battery = None
+
+
 def calculate_needed_battery():
     """
     Calcula dinamicamente quanta bateria o robô precisa para as próximas ações.
     Simula as próximas 2 ações e calcula o custo total + retorno à estação.
-    Retorna: bateria necessária (mínimo RECHARGE_THRESHOLD, máximo 100)
+    Retorna: bateria necessária (mínimo 30%, máximo 100%)
+    
+    Usa cache para evitar recalcular constantemente.
     """
+    global cached_target_battery, last_battery_calculation_time
+    
+    current_time = pygame.time.get_ticks()
+    
+    # Se calculou recentemente (< 1 segundo), usa cache
+    if cached_target_battery is not None and (current_time - last_battery_calculation_time) < 1000:
+        log(f"  Usando cache: {cached_target_battery:.1f}%", "RECHARGE")
+        return cached_target_battery
+    
     robot_pos = tuple(robot_grid_pos)
     items, warehouses, recharge_stations = find_all_positions()
     
@@ -914,6 +938,10 @@ def calculate_needed_battery():
     log(f"  Total de {actions_simulated} ações simuladas", "RECHARGE")
     log(f"  Custo total estimado: {total_cost:.1f}%", "RECHARGE")
     log(f"  Bateria necessária (com margem): {needed_battery:.1f}%", "RECHARGE")
+    
+    # Atualiza cache
+    cached_target_battery = needed_battery
+    last_battery_calculation_time = current_time
     
     return needed_battery
 
@@ -1407,6 +1435,7 @@ def execute_auto_action():
                     current_path_index = 0
                     waiting_for_action = False
                     last_action_time = pygame.time.get_ticks()  # Marca tempo para delay de 300ms
+                    invalidate_battery_cache()  # Invalida cache para recalcular bateria necessária
                     log("=== AÇÃO AUTOMÁTICA COMPLETA: Coleta finalizada ===", "AUTO")
                     return
             else:
