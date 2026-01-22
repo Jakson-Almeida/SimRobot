@@ -368,7 +368,12 @@ def update_auto_recharge():
         # Verifica se o robô se moveu desde a última verificação
         if robot_grid_pos == last_position:
             # Se não se moveu, incrementa o tempo na estação
-            if not is_recharging:
+            if battery >= 100:
+                # Se já está com 100%, mantém a bateria e não faz nada
+                battery = 100
+                is_recharging = False
+                # Não reseta time_at_station para não reiniciar o processo se a bateria baixar
+            elif not is_recharging:
                 # Ainda não está recarregando, verifica se já passou o tempo de espera
                 if time_at_station == 0:
                     time_at_station = current_time
@@ -395,9 +400,9 @@ def update_auto_recharge():
                     else:
                         battery = 100
                 else:
-                    # Bateria cheia, para de recarregar
+                    # Bateria chegou a 100%, para de recarregar mas mantém na estação
                     is_recharging = False
-                    time_at_station = 0
+                    battery = 100
         else:
             # Robô se moveu ou chegou na estação, atualiza last_position e reseta recarga
             is_recharging = False
@@ -441,8 +446,8 @@ def draw_battery():
         
         status_text = f"Recarregando... {time_remaining:.1f}s restantes"
         color = GREEN
-    elif is_at_recharge_station() and not is_recharging:
-        # Está na estação mas ainda não começou a recarregar
+    elif is_at_recharge_station() and not is_recharging and battery < 100:
+        # Está na estação mas ainda não começou a recarregar (e precisa recarregar)
         wait_time = (pygame.time.get_ticks() - time_at_station) / 1000.0 if time_at_station > 0 else 0
         wait_remaining = max(0, (STATION_WAIT_TIME / 1000.0) - wait_time)
         status_text = f"Aguardando... {wait_remaining:.1f}s para iniciar recarga"
