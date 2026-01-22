@@ -94,6 +94,11 @@ waiting_for_action = False  # Se está esperando ação automática completar
 just_collected = False  # Flag para evitar processar próxima ação imediatamente após coleta
 action_completed = False  # Flag para indicar que ação foi completada e pode avançar no plano
 
+# Configurações do modo automático total
+AUTO_ACTION_DELAY = 300  # Pausa de 300ms entre ações no modo automático total
+last_action_time = 0  # Tempo da última ação completada
+RECHARGE_THRESHOLD = 85  # Porcentagem de bateria suficiente para parar de recarregar
+
 # Sistema de logs
 showLogs = True  # Controla se os logs são exibidos no terminal
 
@@ -239,6 +244,7 @@ def is_at_warehouse():
 def update_auto_delivery():
     """Gerencia a entrega automática de itens no almoxarifado."""
     global robot_inventory, is_delivering, time_at_warehouse, last_delivery_time, items_delivered_count, last_position
+    global waiting_for_action, current_action, current_path, auto_mode, last_action_time
     
     current_time = pygame.time.get_ticks()
     
@@ -267,11 +273,26 @@ def update_auto_delivery():
                         last_delivery_time = current_time
                         log(f"Item entregue! Restantes: {len(robot_inventory)}, Total entregue: {items_delivered_count}", "DELIVERY")
                     
-                    # Se não há mais itens, para de entregar
+                    # Se não há mais itens no inventário, para de entregar
                     if len(robot_inventory) == 0:
                         is_delivering = False
                         time_at_warehouse = 0
                         log(f"Entrega completa! Total de itens entregues: {items_delivered_count}", "DELIVERY")
+                        
+                        # Verifica se TODOS os itens do jogo foram entregues
+                        items_remaining = sum(len(items) for items in items_on_grid.values())
+                        
+                        # Se estava em ação automática de entrega, marca como completa
+                        if waiting_for_action and current_action == 'deliver' and auto_mode == AUTO_MODE_FULL:
+                            waiting_for_action = False
+                            current_action = None
+                            current_path = []
+                            last_action_time = current_time  # Marca tempo para delay de 300ms
+                            
+                            if items_remaining == 0:
+                                log("=== AÇÃO AUTOMÁTICA COMPLETA: Todos os itens foram entregues! ===", "AUTO")
+                            else:
+                                log(f"=== AÇÃO AUTOMÁTICA COMPLETA: Inventário entregue. Restam {items_remaining} itens no ambiente ===", "AUTO")
         else:
             # Robô se moveu ou chegou no almoxarifado, atualiza last_position e reseta entrega
             is_delivering = False
@@ -584,6 +605,7 @@ def is_at_recharge_station():
 def update_auto_recharge():
     """Gerencia a recarga automática do robô."""
     global battery, is_recharging, time_at_station, recharge_start_time, battery_at_recharge_start, last_position
+    global waiting_for_action, current_action, current_path, auto_mode, last_action_time
     
     current_time = pygame.time.get_ticks()
     
@@ -592,9 +614,23 @@ def update_auto_recharge():
         # Verifica se o robô se moveu desde a última verificação
         if robot_grid_pos == last_position:
             # Se não se moveu, incrementa o tempo na estação
-            if battery >= 100:
-                # Se já está com 100%, mantém a bateria e não faz nada
-                battery = 100
+            # Para modo automático total, usa threshold. Para manual/semi, carrega até 100%
+            target_battery = RECHARGE_THRESHOLD if auto_mode == AUTO_MODE_FULL else 100
+            
+            if battery >= target_battery:
+                # Se atingiu o threshold/100%, mantém a bateria e não faz nada
+                if is_recharging:
+                    log(f"Recarga COMPLETA! Bateria: {battery:.1f}% (alvo: {target_battery}%)", "RECHARGE")
+                    
+                    # Se estava em ação automática de recarga, marca como completa
+                    if waiting_for_action and current_action == 'recharge' and auto_mode == AUTO_MODE_FULL:
+                        waiting_for_action = False
+                        current_action = None
+                        current_path = []
+                        last_action_time = current_time  # Marca tempo para delay de 300ms
+                        log("=== AÇÃO AUTOMÁTICA COMPLETA: Recarga finalizada ===", "AUTO")
+                
+                battery = min(battery, 100)  # Garante que não ultrapasse 100%
                 is_recharging = False
                 # Não reseta time_at_station para não reiniciar o processo se a bateria baixar
             elif not is_recharging:
@@ -607,29 +643,39 @@ def update_auto_recharge():
                     is_recharging = True
                     recharge_start_time = current_time
                     battery_at_recharge_start = battery
-                    log(f"Recarga iniciada! Bateria: {battery:.1f}% -> 100% (estimado: {((100-battery)/100.0)*RECHARGE_SPEED:.1f}s)", "RECHARGE")
+                    log(f"Recarga iniciada! Bateria: {battery:.1f}% -> {target_battery}% (estimado: {((target_battery-battery)/100.0)*RECHARGE_SPEED:.1f}s)", "RECHARGE")
             else:
                 # Já está recarregando, atualiza a bateria
-                if battery < 100:
+                if battery < target_battery:
                     # Calcula o tempo decorrido desde o início da recarga
                     elapsed_time = (current_time - recharge_start_time) / 1000.0  # em segundos
                     
-                    # Calcula quanto tempo levaria para recarregar do nível atual até 100%
-                    battery_needed = 100 - battery_at_recharge_start
+                    # Calcula quanto tempo levaria para recarregar até o alvo
+                    battery_needed = target_battery - battery_at_recharge_start
                     time_needed = (battery_needed / 100.0) * RECHARGE_SPEED
                     
                     # Calcula a porcentagem de recarga baseada no tempo decorrido
                     if time_needed > 0:
                         recharge_progress = min(1.0, elapsed_time / time_needed)
                         battery = battery_at_recharge_start + (battery_needed * recharge_progress)
-                        battery = min(100, battery)  # Garante que não ultrapasse 100%
+                        battery = min(target_battery, battery)  # Garante que não ultrapasse o alvo
                     else:
-                        battery = 100
+                        battery = target_battery
                 else:
-                    # Bateria chegou a 100%, para de recarregar mas mantém na estação
+                    # Bateria chegou ao threshold/100%, para de recarregar mas mantém na estação
+                    if is_recharging:
+                        log(f"Recarga completa! Bateria: {battery:.1f}% (alvo: {target_battery}%)", "RECHARGE")
+                        
+                        # Se estava em ação automática de recarga, marca como completa
+                        if waiting_for_action and current_action == 'recharge' and auto_mode == AUTO_MODE_FULL:
+                            waiting_for_action = False
+                            current_action = None
+                            current_path = []
+                            last_action_time = current_time  # Marca tempo para delay de 300ms
+                            log("=== AÇÃO AUTOMÁTICA COMPLETA: Recarga finalizada ===", "AUTO")
+                    
                     is_recharging = False
-                    battery = 100
-                    log("Recarga completa! Bateria: 100%", "RECHARGE")
+                    battery = min(battery, 100)  # Garante que não ultrapasse 100%
         else:
             # Robô se moveu ou chegou na estação, atualiza last_position e reseta recarga
             is_recharging = False
@@ -1254,22 +1300,32 @@ def execute_auto_action():
                     log("=== AÇÃO SEMI-AUTOMÁTICA COMPLETA: Coleta finalizada ===", "AUTO")
                     log("Modo semi-automático DESATIVADO. Ative novamente ('S') para próxima ação.", "AUTO")
                     return
-                # Modo automático total: continua
+                # Modo automático total: marca ação completa e registra tempo
                 elif auto_mode == AUTO_MODE_FULL:
-                    action_completed = True  # Marca que ação foi completada
+                    current_action = None
+                    current_path = []
+                    current_path_index = 0
+                    waiting_for_action = False
+                    last_action_time = pygame.time.get_ticks()  # Marca tempo para delay de 300ms
+                    log("=== AÇÃO AUTOMÁTICA COMPLETA: Coleta finalizada ===", "AUTO")
+                    return
             else:
                 log(f"Ação automática FALHOU: Não é possível coletar em ({target_pos[0]}, {target_pos[1]}) - Posição atual: ({robot_grid_pos[0]}, {robot_grid_pos[1]}), Itens: {tuple(robot_grid_pos) in items_on_grid}, Inventário: {len(robot_inventory)}/{ROBOT_CAPACITY}", "ERROR")
-                # Se falhou, também marca como completada para avançar no plano ou desativar modo
+                # Se falhou, limpa e marca tempo
                 if auto_mode == AUTO_MODE_FULL:
-                    action_completed = True
+                    current_action = None
+                    current_path = []
+                    current_path_index = 0
+                    waiting_for_action = False
+                    last_action_time = pygame.time.get_ticks()
                 elif auto_mode == AUTO_MODE_SEMI:
                     auto_mode = AUTO_MODE_OFF
+                    current_action = None
+                    current_path = []
+                    current_path_index = 0
+                    waiting_for_action = False
                     log("Modo semi-automático DESATIVADO devido a falha na coleta.", "AUTO")
-            
-            # Sempre limpa a ação, mesmo se falhou, para evitar loop
-            current_action = None
-            current_path = []
-            current_path_index = 0
+                return
             waiting_for_action = False
         
         elif current_action == 'deliver':
@@ -1325,13 +1381,6 @@ def update_auto_mode():
         just_collected = False
         return
     
-    # Se ação foi completada, avança no plano
-    if action_completed and auto_mode == AUTO_MODE_FULL:
-        if hasattr(update_auto_mode, 'plan_index'):
-            update_auto_mode.plan_index += 1
-            log(f"Avançando para próxima ação do plano: {update_auto_mode.plan_index}", "AUTO")
-        action_completed = False
-    
     # Se está esperando ação completar (entrega ou recarga)
     if waiting_for_action:
         # Modo semi-automático: desativa após completar ação
@@ -1356,116 +1405,94 @@ def update_auto_mode():
                 return
             else:
                 return  # Continua esperando
-        # Modo automático total: continua para próxima ação
+        # Modo automático total: ações completadas pelas funções update_auto_recharge e update_auto_delivery
         elif auto_mode == AUTO_MODE_FULL:
-            if current_action == 'deliver' and len(robot_inventory) == 0:
-                waiting_for_action = False
-                current_action = None
-                current_path = []
-                current_path_index = 0
-                log("Entrega completa, decidindo próxima ação...", "AUTO")
-            elif current_action == 'recharge' and battery >= 100:
-                waiting_for_action = False
-                current_action = None
-                current_path = []
-                current_path_index = 0
-                log("Recarga completa, decidindo próxima ação...", "AUTO")
-            else:
-                return  # Continua esperando
+            return  # Continua esperando, as ações setam waiting_for_action = False quando completam
     
     # Se não há caminho ativo, planeja próxima ação
     if not current_path:
         if auto_mode == AUTO_MODE_FULL:
-            # Modo automático total: planeja missão completa
-            if not hasattr(update_auto_mode, 'full_mission_plan'):
-                log("=== PLANEJANDO MISSÃO COMPLETA (MODO AUTOMÁTICO TOTAL) ===", "AUTO")
-                update_auto_mode.full_mission_plan = plan_full_mission()
-                update_auto_mode.plan_index = 0
-                log(f"Missão planejada: {len(update_auto_mode.full_mission_plan)} ações", "AUTO")
+            # Modo automático total: funciona como sequência de ações semi-automáticas com delay
+            current_time = pygame.time.get_ticks()
             
-            if update_auto_mode.plan_index < len(update_auto_mode.full_mission_plan):
-                action_type, target_pos = update_auto_mode.full_mission_plan[update_auto_mode.plan_index]
+            # Verifica se passou tempo suficiente desde a última ação (delay de 300ms)
+            if last_action_time > 0 and (current_time - last_action_time) < AUTO_ACTION_DELAY:
+                return  # Aguarda delay entre ações
+            
+            log("=== DECIDINDO PRÓXIMA AÇÃO (MODO AUTOMÁTICO TOTAL) ===", "AUTO")
+            
+            # Verifica se missão está completa
+            items_remaining = sum(len(items) for items in items_on_grid.values())
+            if items_remaining == 0 and len(robot_inventory) == 0:
+                log("=== MISSÃO COMPLETA! Todos os itens foram entregues. ===", "AUTO")
+                auto_mode = AUTO_MODE_OFF
+                return
+            
+            # Usa lógica inteligente de decisão (igual ao modo semi-automático)
+            decision = decide_next_action_intelligent()
+            
+            if decision:
+                action_type, target_pos, description = decision
+                log(f"Decisão automática: {description}", "AUTO")
+                
                 graph = build_graph_from_matrix(matriz2)
                 path = a_star(graph, tuple(robot_grid_pos), target_pos)
                 
                 # Valida o caminho antes de usar
                 if path and not validate_path(path):
-                    log(f"ERRO: Caminho inválido calculado para {action_type} -> ({target_pos[0]}, {target_pos[1]})! Abortando ação.", "ERROR")
-                    update_auto_mode.plan_index += 1
+                    log(f"🚫 ERRO: Caminho inválido calculado para {action_type}! Abortando ação.", "ERROR")
+                    last_action_time = current_time  # Marca tempo para tentar novamente após delay
                     return
                 
                 if path:
-                    # No modo automático total, sempre precisa seguir um caminho real
-                    # Se já está na posição, cria um caminho mínimo para garantir que "passe" pela célula
                     if len(path) == 1:
-                        # Já está na posição - cria um caminho mínimo para garantir que "passe" pela célula
+                        # Já está na posição alvo
                         if action_type == 'collect':
-                            # Tenta encontrar uma célula adjacente livre para fazer o movimento
+                            # Para coleta, tenta criar caminho mínimo
                             x, y = target_pos
                             adjacent_found = False
                             for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
                                 nx, ny = x + dx, y + dy
                                 if (0 <= nx < len(matriz2[0]) and 0 <= ny < len(matriz2) and
                                     matriz2[ny][nx] != '0'):
-                                    # Cria caminho: posição atual -> adjacente -> posição alvo
                                     min_path = [(nx, ny), target_pos]
-                                    # Valida o caminho mínimo antes de usar
                                     if validate_path(min_path):
                                         current_path = min_path
                                         current_path_index = 0
                                         current_action = action_type
-                                        log(f"Criando caminho mínimo para passar pela célula: ({x}, {y}) -> ({nx}, {ny}) -> ({x}, {y})", "AUTO")
+                                        log(f"Caminho mínimo criado para coleta: {len(min_path)} passos", "AUTO")
                                         adjacent_found = True
-                                        # NÃO incrementa plan_index aqui - só incrementa quando ação completar
                                         break
-                                    else:
-                                        log(f"ERRO: Caminho mínimo inválido criado! Tentando próxima direção...", "ERROR")
                             
                             if not adjacent_found:
-                                # Não há célula adjacente livre - pula esta ação
-                                log(f"Ação automática PULADA: Não há célula adjacente livre em ({target_pos[0]}, {target_pos[1]})", "AUTO")
-                                update_auto_mode.plan_index += 1
+                                log(f"⚠️ AVISO: Não há célula adjacente livre para coleta. Pulando ação.", "AUTO")
+                                last_action_time = current_time
+                        
                         elif action_type in ['deliver', 'recharge']:
-                            # Para entrega e recarga, pode executar imediatamente se já está na posição
+                            # Para entrega e recarga, pode executar imediatamente
                             current_path = []
                             current_path_index = 0
                             current_action = action_type
                             waiting_for_action = True
-                            update_auto_mode.plan_index += 1
-                        else:
-                            # Outras ações, pula
-                            update_auto_mode.plan_index += 1
+                            log(f"Iniciando {action_type} imediatamente (já está no local)", "AUTO")
                     else:
                         # Remove posição atual e valida o caminho restante
                         remaining_path = path[1:]
                         if not validate_path(remaining_path):
-                            log(f"ERRO: Caminho restante inválido após remover posição atual! Abortando ação.", "ERROR")
-                            update_auto_mode.plan_index += 1
+                            log(f"🚫 ERRO: Caminho restante inválido! Abortando ação.", "ERROR")
+                            last_action_time = current_time
                             return
+                        
                         current_path = remaining_path
                         current_path_index = 0
                         current_action = action_type
-                        log(f"Executando ação {update_auto_mode.plan_index + 1}/{len(update_auto_mode.full_mission_plan)}: {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
-                        log(f"Caminho calculado: {len(path)} passos", "AUTO")
-                        # NÃO define waiting_for_action aqui - só define quando chegar ao destino
-                        # waiting_for_action será definido em execute_auto_action() quando completar o caminho
-                        # NÃO incrementa plan_index aqui - só incrementa quando ação completar
+                        log(f"Executando ação: {action_type} -> ({target_pos[0]}, {target_pos[1]}) | {len(path)} passos", "AUTO")
                 else:
-                    # Sem caminho, pula esta ação
-                    log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
-                    update_auto_mode.plan_index += 1
+                    log(f"🚫 ERRO: Não foi possível encontrar caminho para {action_type}", "ERROR")
+                    last_action_time = current_time
             else:
-                # Missão completa, verifica se há mais itens
-                items, _, _ = find_all_positions()
-                if not items and len(robot_inventory) == 0:
-                    # Tudo entregue, para automação
-                    log("Missão completa! Todos os itens foram entregues.", "AUTO")
-                    auto_mode = AUTO_MODE_OFF
-                else:
-                    # Reinicia planejamento
-                    log("Reiniciando planejamento...", "AUTO")
-                    update_auto_mode.full_mission_plan = plan_full_mission()
-                    update_auto_mode.plan_index = 0
+                log("⚠️ AVISO: Nenhuma ação decidida. Robô aguardando...", "AUTO")
+                last_action_time = current_time
         
         elif auto_mode == AUTO_MODE_SEMI:
             # Modo semi-automático inteligente: decide próxima ação com análise de bateria
@@ -1848,10 +1875,13 @@ while running:
                     # Alterna modo automático total
                     if auto_mode == AUTO_MODE_OFF:
                         auto_mode = AUTO_MODE_FULL
-                        log("=== MODO AUTOMÁTICO TOTAL ATIVADO ===", "MODE")
-                        # Reseta planejamento
-                        if hasattr(update_auto_mode, 'full_mission_plan'):
-                            delattr(update_auto_mode, 'full_mission_plan')
+                        # Limpa estados anteriores
+                        current_path = []
+                        current_path_index = 0
+                        current_action = None
+                        waiting_for_action = False
+                        last_action_time = 0  # Inicia imediatamente sem delay
+                        log("=== MODO AUTOMÁTICO TOTAL ATIVADO (Sequência de ações com delay de 300ms) ===", "MODE")
                     else:
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
