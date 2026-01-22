@@ -618,7 +618,7 @@ def is_at_recharge_station():
 def update_auto_recharge():
     """Gerencia a recarga automática do robô."""
     global battery, is_recharging, time_at_station, recharge_start_time, battery_at_recharge_start, last_position
-    global waiting_for_action, current_action, current_path, auto_mode, last_action_time
+    global waiting_for_action, current_action, current_path, current_path_index, auto_mode, last_action_time
     
     current_time = pygame.time.get_ticks()
     
@@ -638,14 +638,17 @@ def update_auto_recharge():
                 if is_recharging:
                     log(f"Recarga COMPLETA! Bateria: {battery:.1f}% (alvo: {target_battery}%)", "RECHARGE")
                     
-                    # Se estava em ação automática de recarga, marca como completa
-                    if waiting_for_action and current_action == 'recharge' and auto_mode == AUTO_MODE_FULL:
-                        waiting_for_action = False
-                        current_action = None
-                        current_path = []
-                        last_action_time = current_time  # Marca tempo para delay de 300ms
-                        invalidate_battery_cache()  # Invalida cache para recalcular bateria necessária
-                        log("=== AÇÃO AUTOMÁTICA COMPLETA: Recarga finalizada ===", "AUTO")
+                    # Se está no modo automático total, sempre limpa o estado (independente de waiting_for_action)
+                    if auto_mode == AUTO_MODE_FULL:
+                        # Força a limpeza completa do estado para evitar loops
+                        if current_action == 'recharge':
+                            waiting_for_action = False
+                            current_action = None
+                            current_path = []
+                            current_path_index = 0
+                            last_action_time = current_time  # Marca tempo para delay de 300ms
+                            invalidate_battery_cache()  # Invalida cache para recalcular bateria necessária
+                            log("=== AÇÃO AUTOMÁTICA COMPLETA: Recarga finalizada (estado limpo forçadamente) ===", "AUTO")
                 
                 battery = min(battery, 100)  # Garante que não ultrapasse 100%
                 is_recharging = False
@@ -1482,23 +1485,8 @@ def execute_auto_action():
                 current_path = []
                 current_path_index = 0
                 log(f"Robô chegou à estação de recarga, aguardando recarga automática...", "AUTO")
-            # Aguarda recarga completar
-            # No modo automático, verifica se atingiu o target dinâmico
-            else:
-                # Calcula o target de bateria
-                if auto_mode == AUTO_MODE_FULL:
-                    target_battery = calculate_needed_battery()
-                else:
-                    target_battery = 100
-                
-                if battery >= target_battery:
-                    log(f"Ação automática COMPLETA: Recarga em ({robot_grid_pos[0]}, {robot_grid_pos[1]}) - Target: {target_battery:.1f}%", "AUTO")
-                    if auto_mode == AUTO_MODE_FULL:
-                        action_completed = True
-                    current_action = None
-                    current_path = []
-                    current_path_index = 0
-                    waiting_for_action = False
+            # A limpeza do estado é feita em update_auto_recharge() quando atingir target
+            # Não precisa verificar aqui para evitar condição de corrida
 
 
 def update_auto_mode():
