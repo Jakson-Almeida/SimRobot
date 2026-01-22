@@ -92,6 +92,7 @@ current_path_index = 0  # Índice no caminho atual
 current_action = None  # Ação atual: 'move', 'collect', 'deliver', 'recharge'
 waiting_for_action = False  # Se está esperando ação automática completar
 just_collected = False  # Flag para evitar processar próxima ação imediatamente após coleta
+action_completed = False  # Flag para indicar que ação foi completada e pode avançar no plano
 
 # Sistema de logs
 showLogs = True  # Controla se os logs são exibidos no terminal
@@ -932,7 +933,7 @@ def plan_full_mission():
 
 def execute_auto_action():
     """Executa a próxima ação automática."""
-    global current_path, current_path_index, current_action, waiting_for_action, auto_mode, just_collected
+    global current_path, current_path_index, current_action, waiting_for_action, auto_mode, just_collected, action_completed
     
     if not current_path:
         return
@@ -959,28 +960,37 @@ def execute_auto_action():
             current_path_index += 1
     
     # Se completou o caminho, executa a ação
+    # IMPORTANTE: Só executa se realmente seguiu pelo menos 2 passos do caminho
+    # Isso garante que o robô realmente "passou" pela célula, não apenas estava nela
     if current_path_index >= len(current_path) and current_path:
-        # Só executa se realmente completou um caminho (não estava já na posição)
-        if current_action == 'collect':
+        if len(current_path) < 2:
+            # Caminho muito curto - não deveria coletar sem passar pela célula
+            log(f"Ação automática IGNORADA: Caminho muito curto ({len(current_path)} passos) - robô precisa passar pela célula", "AUTO")
+            current_action = None
+            current_path = []
+            current_path_index = 0
+            waiting_for_action = False
+            if auto_mode == AUTO_MODE_FULL:
+                action_completed = True
+        elif current_action == 'collect':
             # Verifica se realmente chegou na posição alvo do caminho
-            # O último passo do caminho original seria a posição alvo
-            # Como removemos o primeiro elemento (posição atual), o último é o alvo
-            if len(current_path) > 0:
-                target_pos = current_path[-1] if current_path else tuple(robot_grid_pos)
-            else:
-                # Se o caminho estava vazio, não deveria estar aqui
-                target_pos = tuple(robot_grid_pos)
+            # O último passo do caminho é a posição alvo
+            target_pos = current_path[-1] if current_path else tuple(robot_grid_pos)
             
-            # Só coleta se realmente está na posição alvo
+            # Só coleta se realmente está na posição alvo E seguiu um caminho real (>= 2 passos)
             if (tuple(robot_grid_pos) == target_pos and
                 tuple(robot_grid_pos) in items_on_grid and 
                 len(items_on_grid[tuple(robot_grid_pos)]) > 0 and
                 len(robot_inventory) < ROBOT_CAPACITY):
                 collect_item(1)
-                log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]}) após passar pela célula", "AUTO")
+                log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]}) após passar pela célula (caminho: {len(current_path)} passos)", "AUTO")
                 just_collected = True  # Marca que acabou de coletar
+                action_completed = True  # Marca que ação foi completada (para modo automático total)
             else:
                 log(f"Ação automática FALHOU: Não é possível coletar em ({target_pos[0]}, {target_pos[1]}) - Posição atual: ({robot_grid_pos[0]}, {robot_grid_pos[1]}), Itens: {tuple(robot_grid_pos) in items_on_grid}, Inventário: {len(robot_inventory)}/{ROBOT_CAPACITY}", "ERROR")
+                # Se falhou, também marca como completada para avançar no plano
+                if auto_mode == AUTO_MODE_FULL:
+                    action_completed = True
             # Sempre limpa a ação, mesmo se falhou, para evitar loop
             current_action = None
             current_path = []
@@ -992,6 +1002,8 @@ def execute_auto_action():
             # Aguarda entrega completar
             if len(robot_inventory) == 0:
                 log(f"Ação automática COMPLETA: Entrega em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
+                if auto_mode == AUTO_MODE_FULL:
+                    action_completed = True
                 current_action = None
                 current_path = []
                 current_path_index = 0
@@ -1002,6 +1014,8 @@ def execute_auto_action():
             # Aguarda recarga completar
             if battery >= 100:
                 log(f"Ação automática COMPLETA: Recarga em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
+                if auto_mode == AUTO_MODE_FULL:
+                    action_completed = True
                 current_action = None
                 current_path = []
                 current_path_index = 0
@@ -1010,7 +1024,7 @@ def execute_auto_action():
 
 def update_auto_mode():
     """Atualiza o modo automático."""
-    global auto_mode, current_path, current_path_index, current_action, waiting_for_action, just_collected
+    global auto_mode, current_path, current_path_index, current_action, waiting_for_action, just_collected, action_completed
     
     if auto_mode == AUTO_MODE_OFF:
         return
@@ -1019,6 +1033,13 @@ def update_auto_mode():
     if just_collected:
         just_collected = False
         return
+    
+    # Se ação foi completada, avança no plano
+    if action_completed and auto_mode == AUTO_MODE_FULL:
+        if hasattr(update_auto_mode, 'plan_index'):
+            update_auto_mode.plan_index += 1
+            log(f"Avançando para próxima ação do plano: {update_auto_mode.plan_index}", "AUTO")
+        action_completed = False
     
     # Se está esperando ação completar (entrega ou recarga)
     if waiting_for_action:
@@ -1056,10 +1077,9 @@ def update_auto_mode():
                 
                 if path:
                     # No modo automático total, sempre precisa seguir um caminho real
-                    # Se já está na posição, pula esta ação (já coletou ou não há itens)
+                    # Se já está na posição, cria um caminho mínimo para garantir que "passe" pela célula
                     if len(path) == 1:
-                        # Já está na posição - no modo automático total, pula esta ação
-                        # pois o robô precisa realmente "passar" pela célula antes de coletar
+                        # Já está na posição - cria um caminho mínimo para garantir que "passe" pela célula
                         if action_type == 'collect':
                             # Tenta encontrar uma célula adjacente livre para fazer o movimento
                             x, y = target_pos
@@ -1074,21 +1094,12 @@ def update_auto_mode():
                                     current_action = action_type
                                     log(f"Criando caminho mínimo para passar pela célula: ({x}, {y}) -> ({nx}, {ny}) -> ({x}, {y})", "AUTO")
                                     adjacent_found = True
-                                    update_auto_mode.plan_index += 1
+                                    # NÃO incrementa plan_index aqui - só incrementa quando ação completar
                                     break
                             
                             if not adjacent_found:
-                                # Não há célula adjacente livre, coleta diretamente (caso raro)
-                                if (tuple(robot_grid_pos) == target_pos and
-                                    tuple(robot_grid_pos) in items_on_grid and 
-                                    len(items_on_grid[tuple(robot_grid_pos)]) > 0 and
-                                    len(robot_inventory) < ROBOT_CAPACITY):
-                                    collect_item(1)
-                                    log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]}) (sem célula adjacente)", "AUTO")
-                                    just_collected = True
-                                else:
-                                    log(f"Ação automática PULADA: Não é possível coletar em ({target_pos[0]}, {target_pos[1]})", "AUTO")
-                                current_action = None
+                                # Não há célula adjacente livre - pula esta ação
+                                log(f"Ação automática PULADA: Não há célula adjacente livre em ({target_pos[0]}, {target_pos[1]})", "AUTO")
                                 update_auto_mode.plan_index += 1
                         elif action_type in ['deliver', 'recharge']:
                             # Para entrega e recarga, pode executar imediatamente se já está na posição
@@ -1108,7 +1119,7 @@ def update_auto_mode():
                         log(f"Caminho calculado: {len(path)} passos", "AUTO")
                         if action_type in ['deliver', 'recharge']:
                             waiting_for_action = True
-                        update_auto_mode.plan_index += 1
+                        # NÃO incrementa plan_index aqui - só incrementa quando ação completar
                 else:
                     # Sem caminho, pula esta ação
                     log(f"ERRO: Não foi possível encontrar caminho para {action_type} -> ({target_pos[0]}, {target_pos[1]})", "ERROR")
@@ -1135,29 +1146,40 @@ def update_auto_mode():
                 path = a_star(graph, tuple(robot_grid_pos), target_pos)
                 
                 if path:
-                    # Se já está na posição alvo, executa ação imediatamente
+                    # Se já está na posição alvo, cria caminho mínimo para garantir que "passe" pela célula
                     if len(path) == 1:
-                        # Já está na posição
-                        current_path = []
-                        current_path_index = 0
-                        current_action = action_type
-                        log(f"Já está na posição alvo (Semi-Auto): {action_type} -> ({target_pos[0]}, {target_pos[1]})", "AUTO")
-                        # Executa ação imediatamente
+                        # Já está na posição - cria caminho mínimo
                         if action_type == 'collect':
-                            if (tuple(robot_grid_pos) in items_on_grid and 
-                                len(items_on_grid[tuple(robot_grid_pos)]) > 0 and
-                                len(robot_inventory) < ROBOT_CAPACITY):
-                                collect_item(1)
-                                log(f"Ação automática COMPLETA: Coleta em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "AUTO")
-                            else:
-                                log(f"Ação automática FALHOU: Não é possível coletar em ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "ERROR")
-                                # Se não conseguiu coletar, limpa ação para evitar loop
+                            # Tenta encontrar uma célula adjacente livre para fazer o movimento
+                            x, y = target_pos
+                            adjacent_found = False
+                            for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                                nx, ny = x + dx, y + dy
+                                if (0 <= nx < len(matriz2[0]) and 0 <= ny < len(matriz2) and
+                                    matriz2[ny][nx] != '0'):
+                                    # Cria caminho: posição atual -> adjacente -> posição alvo
+                                    current_path = [(nx, ny), target_pos]
+                                    current_path_index = 0
+                                    current_action = action_type
+                                    log(f"Criando caminho mínimo (Semi-Auto) para passar pela célula: ({x}, {y}) -> ({nx}, {ny}) -> ({x}, {y})", "AUTO")
+                                    adjacent_found = True
+                                    break
+                            
+                            if not adjacent_found:
+                                # Não há célula adjacente livre - não pode coletar sem passar pela célula
+                                log(f"Ação automática PULADA (Semi-Auto): Não há célula adjacente livre em ({target_pos[0]}, {target_pos[1]})", "AUTO")
                                 current_action = None
                         elif action_type == 'deliver':
                             # Se já está no almoxarifado, apenas espera a entrega automática
+                            current_path = []
+                            current_path_index = 0
+                            current_action = action_type
                             waiting_for_action = True
                         elif action_type == 'recharge':
                             # Se já está na estação, apenas espera a recarga automática
+                            current_path = []
+                            current_path_index = 0
+                            current_action = action_type
                             waiting_for_action = True
                     else:
                         current_path = path[1:]  # Remove posição atual
