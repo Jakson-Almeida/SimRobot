@@ -76,6 +76,10 @@ time_at_warehouse = 0  # Tempo em milissegundos que está parado no almoxarifado
 last_delivery_time = 0  # Último tempo que entregou um item
 items_delivered_count = 0  # Contador de itens entregues
 
+# Variáveis de estado do jogo
+game_state = "playing"  # "playing", "victory", "game_over"
+total_items_initial = 0  # Total de itens no início do jogo
+
 
 def draw_grid():
     """Desenha a matriz representando o ambiente."""
@@ -104,9 +108,10 @@ def draw_grid():
 
 def initialize_items_randomly():
     """Inicializa itens aleatoriamente nas células tipo '1'."""
-    global items_on_grid
+    global items_on_grid, total_items_initial
     
     items_on_grid = {}
+    total_items_initial = 0
     
     # Percorre todas as células tipo '1' e adiciona itens aleatoriamente
     for row_idx, row in enumerate(matriz2):
@@ -121,6 +126,7 @@ def initialize_items_randomly():
                     for _ in range(num_items):
                         item_type = random.choice(ITEM_TYPES)
                         items_on_grid[cell_key].append({'type': item_type})
+                        total_items_initial += 1
 
 
 def draw_items_on_grid():
@@ -652,6 +658,123 @@ def draw_delivery_status():
         screen.blit(delivered_surface, (10, HEIGHT - 160))
 
 
+def check_game_state():
+    """Verifica o estado do jogo (vitória ou game over)."""
+    global game_state
+    
+    # Verifica se todos os itens foram entregues
+    items_remaining = sum(len(items) for items in items_on_grid.values())
+    total_items_delivered = items_delivered_count + len(robot_inventory)
+    
+    if items_remaining == 0 and len(robot_inventory) == 0 and total_items_initial > 0:
+        # Todos os itens foram coletados e entregues
+        if game_state == "playing":
+            game_state = "victory"
+    elif battery <= 0 and (items_remaining > 0 or len(robot_inventory) > 0):
+        # Bateria acabou e ainda há itens para entregar
+        if game_state == "playing":
+            game_state = "game_over"
+
+
+def draw_game_overlay():
+    """Desenha mensagens de vitória ou game over."""
+    if game_state == "victory":
+        # Mensagem de vitória
+        overlay = pygame.Surface((WIDTH, HEIGHT))
+        overlay.set_alpha(200)
+        overlay.fill(BLACK)
+        screen.blit(overlay, (0, 0))
+        
+        # Título
+        title_font = pygame.font.Font(None, 72)
+        title_text = title_font.render("PARABÉNS!", True, GREEN)
+        title_rect = title_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
+        screen.blit(title_text, title_rect)
+        
+        # Mensagem
+        message_font = pygame.font.Font(None, 48)
+        message_text = message_font.render("Todos os itens foram entregues!", True, WHITE)
+        message_rect = message_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+        screen.blit(message_text, message_rect)
+        
+        # Instrução
+        instruction_font = pygame.font.Font(None, 36)
+        instruction_text = instruction_font.render("Pressione ESPAÇO para jogar novamente", True, (200, 200, 200))
+        instruction_rect = instruction_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 60))
+        screen.blit(instruction_text, instruction_rect)
+        
+    elif game_state == "game_over":
+        # Mensagem de game over
+        overlay = pygame.Surface((WIDTH, HEIGHT))
+        overlay.set_alpha(200)
+        overlay.fill(BLACK)
+        screen.blit(overlay, (0, 0))
+        
+        # Título
+        title_font = pygame.font.Font(None, 72)
+        title_text = title_font.render("GAME OVER", True, RED)
+        title_rect = title_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
+        screen.blit(title_text, title_rect)
+        
+        # Mensagem
+        message_font = pygame.font.Font(None, 48)
+        message_text = message_font.render("Bateria acabou!", True, WHITE)
+        message_rect = message_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+        screen.blit(message_text, message_rect)
+        
+        # Mensagem adicional
+        items_remaining = sum(len(items) for items in items_on_grid.values()) + len(robot_inventory)
+        additional_text = message_font.render(f"Ainda há {items_remaining} itens para entregar", True, (255, 200, 200))
+        additional_rect = additional_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
+        screen.blit(additional_text, additional_rect)
+        
+        # Instrução
+        instruction_font = pygame.font.Font(None, 36)
+        instruction_text = instruction_font.render("Pressione ESPAÇO para tentar novamente", True, (200, 200, 200))
+        instruction_rect = instruction_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 100))
+        screen.blit(instruction_text, instruction_rect)
+
+
+def reset_game():
+    """Reinicia o jogo."""
+    global robot_grid_pos, robot_real_pos, battery
+    global is_recharging, time_at_station, recharge_start_time, battery_at_recharge_start, last_position
+    global items_on_grid, robot_inventory
+    global is_delivering, time_at_warehouse, last_delivery_time, items_delivered_count
+    global game_state, total_items_initial
+    
+    # Resetar posição do robô
+    for row_idx, row in enumerate(matriz2):
+        for col_idx, cell in enumerate(row):
+            if cell == 'S':
+                robot_grid_pos = [col_idx, row_idx]
+                robot_real_pos = [col_idx * CELL_SIZE, row_idx * CELL_SIZE]
+                break
+    
+    # Resetar bateria
+    battery = 100
+    
+    # Resetar recarga
+    is_recharging = False
+    time_at_station = 0
+    recharge_start_time = 0
+    battery_at_recharge_start = 100
+    last_position = robot_grid_pos.copy()
+    
+    # Resetar itens
+    robot_inventory = []
+    items_delivered_count = 0
+    initialize_items_randomly()
+    
+    # Resetar entrega
+    is_delivering = False
+    time_at_warehouse = 0
+    last_delivery_time = 0
+    
+    # Resetar estado do jogo
+    game_state = "playing"
+
+
 # Inicializar itens aleatoriamente
 initialize_items_randomly()
 
@@ -662,19 +785,35 @@ clock = pygame.time.Clock()
 while running:
     screen.fill(BLACK)
 
-    # Atualiza a recarga automática
-    update_auto_recharge()
+    # Verifica o estado do jogo
+    if game_state == "playing":
+        check_game_state()
+        
+        # Atualiza a recarga automática
+        update_auto_recharge()
+        
+        # Atualiza a entrega automática
+        update_auto_delivery()
+        
+        draw_grid()
+        draw_items_on_grid()  # Desenha itens no grid
+        animate_robot()  # Atualiza a posição do robô suavemente
+        draw_robot(scale=0.45)
+        draw_robot_item_count()  # Mostra quantidade de itens carregados
+        draw_battery()
+        draw_delivery_status()  # Mostra status de entrega
+    else:
+        # Desenha o jogo pausado
+        draw_grid()
+        draw_items_on_grid()
+        animate_robot()  # Mantém animação mesmo pausado
+        draw_robot(scale=0.45)
+        draw_robot_item_count()
+        draw_battery()
+        draw_delivery_status()
     
-    # Atualiza a entrega automática
-    update_auto_delivery()
-    
-    draw_grid()
-    draw_items_on_grid()  # Desenha itens no grid
-    animate_robot()  # Atualiza a posição do robô suavemente
-    draw_robot(scale=0.45)
-    draw_robot_item_count()  # Mostra quantidade de itens carregados
-    draw_battery()
-    draw_delivery_status()  # Mostra status de entrega
+    # Desenha overlay de vitória ou game over
+    draw_game_overlay()
 
     pygame.display.flip()
     clock.tick(30)  # Atualiza 30 vezes por segundo
@@ -685,19 +824,24 @@ while running:
             running = False
 
         elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_RIGHT:
-                move_robot('mr')
-            elif event.key == pygame.K_LEFT:
-                move_robot('ml')
-            elif event.key == pygame.K_UP:
-                move_robot('mu')
-            elif event.key == pygame.K_DOWN:
-                move_robot('md')
-            elif event.key == pygame.K_1:
-                # Coleta o primeiro item (índice 1)
-                collect_item(1)
-            elif event.key == pygame.K_2:
-                # Coleta o segundo item (índice 2)
-                collect_item(2)
+            if game_state == "playing":
+                # Controles normais apenas quando jogando
+                if event.key == pygame.K_RIGHT:
+                    move_robot('mr')
+                elif event.key == pygame.K_LEFT:
+                    move_robot('ml')
+                elif event.key == pygame.K_UP:
+                    move_robot('mu')
+                elif event.key == pygame.K_DOWN:
+                    move_robot('md')
+                elif event.key == pygame.K_1:
+                    # Coleta o primeiro item (índice 1)
+                    collect_item(1)
+                elif event.key == pygame.K_2:
+                    # Coleta o segundo item (índice 2)
+                    collect_item(2)
+            elif event.key == pygame.K_SPACE:
+                # Reinicia o jogo quando em vitória ou game over
+                reset_game()
 
 pygame.quit()
