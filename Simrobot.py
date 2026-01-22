@@ -1,6 +1,8 @@
 import pygame
 import math
 import random
+import heapq
+from typing import List, Tuple, Dict, Optional
 
 # Definições de cores
 WHITE = (255, 255, 255)
@@ -79,6 +81,16 @@ items_delivered_count = 0  # Contador de itens entregues
 # Variáveis de estado do jogo
 game_state = "playing"  # "playing", "victory", "game_over"
 total_items_initial = 0  # Total de itens no início do jogo
+
+# Sistema de automação
+AUTO_MODE_OFF = 0
+AUTO_MODE_FULL = 1
+AUTO_MODE_SEMI = 2
+auto_mode = AUTO_MODE_OFF
+current_path = []  # Caminho atual a seguir
+current_path_index = 0  # Índice no caminho atual
+current_action = None  # Ação atual: 'move', 'collect', 'deliver', 'recharge'
+waiting_for_action = False  # Se está esperando ação automática completar
 
 
 def draw_grid():
@@ -582,6 +594,355 @@ def update_auto_recharge():
         last_position = robot_grid_pos.copy()
 
 
+# ==================== SISTEMA DE AUTOMAÇÃO ====================
+
+def build_graph_from_matrix(matriz):
+    """Constrói grafo a partir da matriz do ambiente."""
+    graph = {}
+    rows = len(matriz)
+    cols = len(matriz[0])
+    
+    for y in range(rows):
+        for x in range(cols):
+            if matriz[y][x] != '0':  # Não é obstáculo
+                node = (x, y)
+                neighbors = []
+                
+                # Verifica 4 direções
+                for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < cols and 0 <= ny < rows:
+                        if matriz[ny][nx] != '0':
+                            neighbors.append(((nx, ny), 1.0))  # Custo 1 por movimento
+                
+                graph[node] = neighbors
+    
+    return graph
+
+
+def heuristic_manhattan(pos1, pos2):
+    """Heurística Manhattan para A*."""
+    return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+
+def a_star(graph, start, goal):
+    """
+    A* para encontrar caminho entre start e goal.
+    Retorna lista de posições do caminho.
+    """
+    if start == goal:
+        return [start]
+    
+    open_set = [(0, start)]  # (f_score, node)
+    came_from = {}
+    g_score = {start: 0}
+    f_score = {start: heuristic_manhattan(start, goal)}
+    
+    while open_set:
+        current = heapq.heappop(open_set)[1]
+        
+        if current == goal:
+            # Reconstrói caminho
+            path = []
+            while current in came_from:
+                path.append(current)
+                current = came_from[current]
+            path.append(start)
+            return path[::-1]
+        
+        for neighbor, cost in graph.get(current, []):
+            tentative_g = g_score[current] + cost
+            
+            if neighbor not in g_score or tentative_g < g_score[neighbor]:
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g
+                f_score[neighbor] = tentative_g + heuristic_manhattan(neighbor, goal)
+                heapq.heappush(open_set, (f_score[neighbor], neighbor))
+    
+    return []  # Sem caminho
+
+
+def find_all_positions():
+    """Encontra todas as posições importantes no ambiente."""
+    items = list(items_on_grid.keys())
+    warehouses = []
+    recharge_stations = []
+    
+    for y in range(len(matriz2)):
+        for x in range(len(matriz2[0])):
+            if matriz2[y][x] == 'A':
+                warehouses.append((x, y))
+            elif matriz2[y][x] == 'R':
+                recharge_stations.append((x, y))
+    
+    return items, warehouses, recharge_stations
+
+
+def find_nearest(target_pos, positions):
+    """Encontra a posição mais próxima de target_pos."""
+    if not positions:
+        return None
+    
+    graph = build_graph_from_matrix(matriz2)
+    min_dist = float('inf')
+    nearest = None
+    
+    for pos in positions:
+        path = a_star(graph, tuple(target_pos), pos)
+        if path:
+            dist = len(path) - 1
+            if dist < min_dist:
+                min_dist = dist
+                nearest = pos
+    
+    return nearest
+
+
+def estimate_battery_cost(path):
+    """Estima custo de bateria para um caminho."""
+    return (len(path) - 1) * 2  # 2% por movimento
+
+
+def decide_next_action():
+    """
+    Decide a próxima ação para modo semi-automático.
+    Retorna: ('action_type', target_pos) ou None
+    """
+    robot_pos = tuple(robot_grid_pos)
+    items, warehouses, recharge_stations = find_all_positions()
+    
+    # Prioridade 1: Recarregar se bateria muito baixa (< 20%)
+    if battery < 20 and recharge_stations:
+        nearest_recharge = find_nearest(robot_pos, recharge_stations)
+        if nearest_recharge:
+            return ('recharge', nearest_recharge)
+    
+    # Prioridade 2: Entregar se inventário cheio
+    if len(robot_inventory) >= ROBOT_CAPACITY and warehouses:
+        nearest_warehouse = find_nearest(robot_pos, warehouses)
+        if nearest_warehouse:
+            return ('deliver', nearest_warehouse)
+    
+    # Prioridade 3: Coletar itens se houver espaço
+    if len(robot_inventory) < ROBOT_CAPACITY and items:
+        # Escolhe item mais próximo
+        nearest_item = find_nearest(robot_pos, items)
+        if nearest_item:
+            # Verifica se tem bateria suficiente
+            graph = build_graph_from_matrix(matriz2)
+            path = a_star(graph, robot_pos, nearest_item)
+            if path:
+                battery_cost = estimate_battery_cost(path)
+                if battery >= battery_cost + 10:  # Deixa margem de segurança
+                    return ('collect', nearest_item)
+    
+    # Prioridade 4: Entregar mesmo sem estar cheio (se muito próximo)
+    if len(robot_inventory) > 0 and warehouses:
+        nearest_warehouse = find_nearest(robot_pos, warehouses)
+        if nearest_warehouse:
+            graph = build_graph_from_matrix(matriz2)
+            path = a_star(graph, robot_pos, nearest_warehouse)
+            if path and len(path) <= 3:  # Muito próximo (3 ou menos movimentos)
+                return ('deliver', nearest_warehouse)
+    
+    return None
+
+
+def plan_full_mission():
+    """
+    Planeja missão completa para modo automático total.
+    Retorna lista de ações: [('action_type', target_pos), ...]
+    """
+    mission_plan = []
+    current_pos = tuple(robot_grid_pos)
+    current_battery = battery
+    remaining_items = list(items_on_grid.keys())
+    graph = build_graph_from_matrix(matriz2)
+    items, warehouses, recharge_stations = find_all_positions()
+    
+    while remaining_items:
+        # Verifica se precisa recarregar antes de continuar
+        if current_battery < 30 and recharge_stations:
+            nearest_recharge = find_nearest(current_pos, recharge_stations)
+            if nearest_recharge:
+                path = a_star(graph, current_pos, nearest_recharge)
+                if path:
+                    mission_plan.append(('recharge', nearest_recharge))
+                    current_pos = nearest_recharge
+                    current_battery = 100
+        
+        # Coleta itens até encher ou acabar
+        items_to_collect = []
+        items_collected = 0
+        
+        while items_collected < ROBOT_CAPACITY and remaining_items:
+            nearest_item = find_nearest(current_pos, remaining_items)
+            if not nearest_item:
+                break
+            
+            path = a_star(graph, current_pos, nearest_item)
+            if not path:
+                break
+            
+            battery_cost = estimate_battery_cost(path)
+            if current_battery < battery_cost + 20:  # Precisa recarregar
+                break
+            
+            items_to_collect.append(nearest_item)
+            remaining_items.remove(nearest_item)
+            items_collected += 1
+            current_pos = nearest_item
+            current_battery -= battery_cost
+        
+        # Adiciona ações de coleta
+        for item_pos in items_to_collect:
+            mission_plan.append(('collect', item_pos))
+        
+        # Vai entregar no almoxarifado mais próximo
+        if items_to_collect and warehouses:
+            nearest_warehouse = find_nearest(current_pos, warehouses)
+            if nearest_warehouse:
+                path = a_star(graph, current_pos, nearest_warehouse)
+                if path:
+                    battery_cost = estimate_battery_cost(path)
+                    current_battery -= battery_cost
+                    mission_plan.append(('deliver', nearest_warehouse))
+                    current_pos = nearest_warehouse
+    
+    return mission_plan
+
+
+def execute_auto_action():
+    """Executa a próxima ação automática."""
+    global current_path, current_path_index, current_action, waiting_for_action, auto_mode
+    
+    if not current_path:
+        return
+    
+    # Se ainda está seguindo um caminho
+    if current_path_index < len(current_path):
+        next_pos = current_path[current_path_index]
+        
+        # Move o robô na direção do próximo passo
+        current_x, current_y = robot_grid_pos
+        target_x, target_y = next_pos
+        
+        if target_x > current_x:
+            move_robot('mr')
+        elif target_x < current_x:
+            move_robot('ml')
+        elif target_y > current_y:
+            move_robot('md')
+        elif target_y < current_y:
+            move_robot('mu')
+        
+        # Verifica se chegou na posição
+        if robot_grid_pos[0] == target_x and robot_grid_pos[1] == target_y:
+            current_path_index += 1
+    
+    # Se completou o caminho, executa a ação
+    if current_path_index >= len(current_path):
+        if current_action == 'collect':
+            # Coleta primeiro item disponível
+            if (tuple(robot_grid_pos) in items_on_grid and 
+                len(items_on_grid[tuple(robot_grid_pos)]) > 0):
+                collect_item(1)
+            current_action = None
+            current_path = []
+            current_path_index = 0
+            waiting_for_action = False
+        
+        elif current_action == 'deliver':
+            # Entrega será automática quando chegar no almoxarifado
+            # Aguarda entrega completar
+            if len(robot_inventory) == 0:
+                current_action = None
+                current_path = []
+                current_path_index = 0
+                waiting_for_action = False
+        
+        elif current_action == 'recharge':
+            # Recarga será automática quando chegar na estação
+            # Aguarda recarga completar
+            if battery >= 100:
+                current_action = None
+                current_path = []
+                current_path_index = 0
+                waiting_for_action = False
+
+
+def update_auto_mode():
+    """Atualiza o modo automático."""
+    global auto_mode, current_path, current_path_index, current_action, waiting_for_action
+    
+    if auto_mode == AUTO_MODE_OFF:
+        return
+    
+    # Se está esperando ação completar (entrega ou recarga)
+    if waiting_for_action:
+        if current_action == 'deliver' and len(robot_inventory) == 0:
+            waiting_for_action = False
+            current_action = None
+        elif current_action == 'recharge' and battery >= 100:
+            waiting_for_action = False
+            current_action = None
+        else:
+            return  # Continua esperando
+    
+    # Se não há caminho ativo, planeja próxima ação
+    if not current_path:
+        if auto_mode == AUTO_MODE_FULL:
+            # Modo automático total: planeja missão completa
+            if not hasattr(update_auto_mode, 'full_mission_plan'):
+                update_auto_mode.full_mission_plan = plan_full_mission()
+                update_auto_mode.plan_index = 0
+            
+            if update_auto_mode.plan_index < len(update_auto_mode.full_mission_plan):
+                action_type, target_pos = update_auto_mode.full_mission_plan[update_auto_mode.plan_index]
+                graph = build_graph_from_matrix(matriz2)
+                path = a_star(graph, tuple(robot_grid_pos), target_pos)
+                
+                if path:
+                    current_path = path[1:]  # Remove posição atual
+                    current_path_index = 0
+                    current_action = action_type
+                    if action_type in ['deliver', 'recharge']:
+                        waiting_for_action = True
+                    update_auto_mode.plan_index += 1
+                else:
+                    # Sem caminho, pula esta ação
+                    update_auto_mode.plan_index += 1
+            else:
+                # Missão completa, verifica se há mais itens
+                items, _, _ = find_all_positions()
+                if not items and len(robot_inventory) == 0:
+                    # Tudo entregue, para automação
+                    auto_mode = AUTO_MODE_OFF
+                else:
+                    # Reinicia planejamento
+                    update_auto_mode.full_mission_plan = plan_full_mission()
+                    update_auto_mode.plan_index = 0
+        
+        elif auto_mode == AUTO_MODE_SEMI:
+            # Modo semi-automático: decide próxima ação
+            action = decide_next_action()
+            if action:
+                action_type, target_pos = action
+                graph = build_graph_from_matrix(matriz2)
+                path = a_star(graph, tuple(robot_grid_pos), target_pos)
+                
+                if path:
+                    current_path = path[1:]  # Remove posição atual
+                    current_path_index = 0
+                    current_action = action_type
+                    if action_type in ['deliver', 'recharge']:
+                        waiting_for_action = True
+    
+    # Executa ação atual
+    if current_path:
+        execute_auto_action()
+
+
 def animate_robot():
     """Faz a animação de transição suave do robô entre os nós."""
     target_x = robot_grid_pos[0] * CELL_SIZE
@@ -656,6 +1017,30 @@ def draw_delivery_status():
         delivered_text = f"Itens entregues: {items_delivered_count}"
         delivered_surface = font.render(delivered_text, True, WHITE)
         screen.blit(delivered_surface, (10, HEIGHT - 160))
+
+
+def draw_auto_mode_status():
+    """Exibe o status do modo automático."""
+    if auto_mode == AUTO_MODE_FULL:
+        mode_text = "Modo: AUTOMÁTICO TOTAL (A para desativar)"
+        color = GREEN
+    elif auto_mode == AUTO_MODE_SEMI:
+        mode_text = "Modo: SEMI-AUTOMÁTICO (S para desativar)"
+        color = (255, 200, 0)  # Laranja
+    else:
+        mode_text = "Modo: MANUAL (A=Auto Total, S=Semi-Auto)"
+        color = WHITE
+    
+    mode_surface = font.render(mode_text, True, color)
+    screen.blit(mode_surface, (10, 10))
+    
+    # Mostra ação atual se estiver em modo automático
+    if auto_mode != AUTO_MODE_OFF and current_action:
+        action_text = f"Ação: {current_action.upper()}"
+        if current_path:
+            action_text += f" - {len(current_path) - current_path_index} passos restantes"
+        action_surface = font.render(action_text, True, color)
+        screen.blit(action_surface, (10, 50))
 
 
 def check_game_state():
@@ -795,6 +1180,9 @@ while running:
         # Atualiza a entrega automática
         update_auto_delivery()
         
+        # Atualiza modo automático
+        update_auto_mode()
+        
         draw_grid()
         draw_items_on_grid()  # Desenha itens no grid
         animate_robot()  # Atualiza a posição do robô suavemente
@@ -802,6 +1190,7 @@ while running:
         draw_robot_item_count()  # Mostra quantidade de itens carregados
         draw_battery()
         draw_delivery_status()  # Mostra status de entrega
+        draw_auto_mode_status()  # Mostra status do modo automático
     else:
         # Desenha o jogo pausado
         draw_grid()
@@ -825,19 +1214,65 @@ while running:
 
         elif event.type == pygame.KEYDOWN:
             if game_state == "playing":
-                # Controles normais apenas quando jogando
-                if event.key == pygame.K_RIGHT:
+                # Controles de modo automático
+                if event.key == pygame.K_a:
+                    # Alterna modo automático total
+                    if auto_mode == AUTO_MODE_OFF:
+                        auto_mode = AUTO_MODE_FULL
+                        # Reseta planejamento
+                        if hasattr(update_auto_mode, 'full_mission_plan'):
+                            delattr(update_auto_mode, 'full_mission_plan')
+                    else:
+                        auto_mode = AUTO_MODE_OFF
+                        current_path = []
+                        current_action = None
+                
+                elif event.key == pygame.K_s:
+                    # Alterna modo semi-automático
+                    if auto_mode == AUTO_MODE_OFF:
+                        auto_mode = AUTO_MODE_SEMI
+                    else:
+                        auto_mode = AUTO_MODE_OFF
+                        current_path = []
+                        current_action = None
+                
+                # Controles normais (interrompem modo automático se usado)
+                elif event.key == pygame.K_RIGHT:
+                    if auto_mode != AUTO_MODE_OFF:
+                        auto_mode = AUTO_MODE_OFF
+                        current_path = []
+                        current_action = None
                     move_robot('mr')
                 elif event.key == pygame.K_LEFT:
+                    if auto_mode != AUTO_MODE_OFF:
+                        auto_mode = AUTO_MODE_OFF
+                        current_path = []
+                        current_action = None
                     move_robot('ml')
                 elif event.key == pygame.K_UP:
+                    if auto_mode != AUTO_MODE_OFF:
+                        auto_mode = AUTO_MODE_OFF
+                        current_path = []
+                        current_action = None
                     move_robot('mu')
                 elif event.key == pygame.K_DOWN:
+                    if auto_mode != AUTO_MODE_OFF:
+                        auto_mode = AUTO_MODE_OFF
+                        current_path = []
+                        current_action = None
                     move_robot('md')
                 elif event.key == pygame.K_1:
+                    if auto_mode != AUTO_MODE_OFF:
+                        auto_mode = AUTO_MODE_OFF
+                        current_path = []
+                        current_action = None
                     # Coleta o primeiro item (índice 1)
                     collect_item(1)
                 elif event.key == pygame.K_2:
+                    if auto_mode != AUTO_MODE_OFF:
+                        auto_mode = AUTO_MODE_OFF
+                        current_path = []
+                        current_action = None
                     # Coleta o segundo item (índice 2)
                     collect_item(2)
             elif event.key == pygame.K_SPACE:
