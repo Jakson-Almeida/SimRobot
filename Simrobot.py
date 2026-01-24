@@ -1,7 +1,9 @@
 import pygame
+import pygame.sndarray
 import math
 import random
 import heapq
+import numpy as np
 from typing import List, Tuple, Dict, Optional
 
 # Definições de cores
@@ -46,7 +48,7 @@ ITEM_COLORS = {
 
 matriz2 = [
     ['A', '1', '1', 'R', '1', '1', '1', '1'],
-    ['1', '1', '1', '1', 'A', '1', '1', '0'],
+    ['1', '1', '1', '1', '1', '1', '1', '0'],
     ['1', '1', '1', '0', '0', '1', '0', '1'],
     ['1', 'S', '1', '1', '1', '1', '0', '1'],
     ['1', '0', '1', '1', '0', '1', '1', '1'],
@@ -61,6 +63,7 @@ for row_idx, row in enumerate(matriz2):
 
 # Inicializar pygame
 pygame.init()
+pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
 
 # Configurar a tela
 GRID_WIDTH = len(matriz2[0]) * CELL_SIZE
@@ -79,6 +82,10 @@ font_tiny = pygame.font.Font(None, 18)   # Reduzido de 22
 # Sistema de scroll do painel lateral
 panel_scroll_offset = 0  # Offset de scroll do painel
 panel_max_scroll = 0     # Máximo de scroll possível
+
+# Sistema de sons
+SOUND_ENABLED = True  # Toggle para habilitar/desabilitar sons
+sounds = {}
 
 # Posição real do robô (para animação)
 robot_real_pos = [robot_grid_pos[0] * CELL_SIZE, robot_grid_pos[1] * CELL_SIZE]
@@ -131,6 +138,69 @@ last_battery_calculation_time = 0  # Última vez que calculou
 
 # Sistema de logs
 showLogs = True  # Controla se os logs são exibidos no terminal
+
+
+def generate_beep(frequency=440, duration=0.1, volume=0.3):
+    """Gera um beep sintético com frequência e duração especificadas."""
+    sample_rate = 22050
+    n_samples = int(round(duration * sample_rate))
+    
+    # Gera onda senoidal
+    buf = np.sin(2 * np.pi * np.arange(n_samples) * frequency / sample_rate)
+    
+    # Aplica envelope para evitar clicks
+    fade_samples = int(sample_rate * 0.01)  # 10ms de fade
+    fade_in = np.linspace(0, 1, fade_samples)
+    fade_out = np.linspace(1, 0, fade_samples)
+    buf[:fade_samples] *= fade_in
+    buf[-fade_samples:] *= fade_out
+    
+    # Converte para formato stereo e aplica volume
+    buf = (buf * volume * 32767).astype(np.int16)
+    stereo_buf = np.column_stack((buf, buf))
+    
+    return pygame.sndarray.make_sound(stereo_buf)
+
+
+def init_sounds():
+    """Inicializa todos os sons do jogo."""
+    global sounds
+    
+    try:
+        # Som de movimento (beep curto e grave)
+        sounds['move'] = generate_beep(frequency=200, duration=0.05, volume=0.2)
+        
+        # Som de coleta (beep médio e ascendente)
+        sounds['collect'] = generate_beep(frequency=600, duration=0.15, volume=0.3)
+        
+        # Som de entrega (beep agudo)
+        sounds['deliver'] = generate_beep(frequency=800, duration=0.2, volume=0.3)
+        
+        # Som de recarga (beep longo e médio)
+        sounds['recharge_start'] = generate_beep(frequency=400, duration=0.25, volume=0.25)
+        sounds['recharge_complete'] = generate_beep(frequency=700, duration=0.3, volume=0.3)
+        
+        # Som de vitória (sequência ascendente)
+        sounds['victory'] = generate_beep(frequency=880, duration=0.4, volume=0.4)
+        
+        # Som de game over (beep grave descendente)
+        sounds['gameover'] = generate_beep(frequency=200, duration=0.5, volume=0.4)
+        
+        # Som de mudança de modo
+        sounds['mode_change'] = generate_beep(frequency=500, duration=0.15, volume=0.25)
+        
+        log("Sistema de sons inicializado com sucesso!", "SOUND")
+    except Exception as e:
+        log(f"Erro ao inicializar sons: {e}", "ERROR")
+
+
+def play_sound(sound_name):
+    """Toca um som se o sistema de som estiver habilitado."""
+    if SOUND_ENABLED and sound_name in sounds:
+        try:
+            sounds[sound_name].play()
+        except Exception as e:
+            log(f"Erro ao tocar som '{sound_name}': {e}", "ERROR")
 
 
 def log(message, level="INFO"):
@@ -250,6 +320,9 @@ def collect_item(item_index):
                 log(f"Item coletado: tipo {item['type']} em ({x}, {y})", "COLLECT")
                 log(f"Inventário: {len(robot_inventory) - 1} -> {len(robot_inventory)}/{ROBOT_CAPACITY}", "INVENTORY")
                 
+                # Toca som de coleta
+                play_sound('collect')
+                
                 # Remove a célula se não houver mais itens
                 if len(items_on_grid[cell_key]) == 0:
                     del items_on_grid[cell_key]
@@ -302,6 +375,9 @@ def update_auto_delivery():
                         items_delivered_count += 1
                         last_delivery_time = current_time
                         log(f"Item entregue! Restantes: {len(robot_inventory)}, Total entregue: {items_delivered_count}", "DELIVERY")
+                        
+                        # Toca som de entrega
+                        play_sound('deliver')
                     
                     # Se não há mais itens no inventário, para de entregar
                     if len(robot_inventory) == 0:
@@ -609,6 +685,9 @@ def move_robot(command):
         log(f"Robô moveu {direction_map.get(command, command)}: ({old_pos[0]}, {old_pos[1]}) -> ({robot_grid_pos[0]}, {robot_grid_pos[1]})", "MOVE")
         log(f"Bateria: {battery + 2}% -> {battery - 2}%", "BATTERY")
         
+        # Toca som de movimento
+        play_sound('move')
+        
         if is_recharging:
             log("Recarga interrompida por movimento", "RECHARGE")
         if is_delivering:
@@ -656,6 +735,9 @@ def update_auto_recharge():
                 if is_recharging:
                     log(f"Recarga COMPLETA! Bateria: {battery:.1f}% (alvo: {target_battery}%)", "RECHARGE")
                     
+                    # Toca som de recarga completa
+                    play_sound('recharge_complete')
+                    
                     # Se está no modo automático total, sempre limpa o estado (independente de waiting_for_action)
                     if auto_mode == AUTO_MODE_FULL:
                         # Força a limpeza completa do estado para evitar loops
@@ -682,6 +764,9 @@ def update_auto_recharge():
                     recharge_start_time = current_time
                     battery_at_recharge_start = battery
                     log(f"Recarga iniciada! Bateria: {battery:.1f}% -> {target_battery}% (estimado: {((target_battery-battery)/100.0)*RECHARGE_SPEED:.1f}s)", "RECHARGE")
+                    
+                    # Toca som de início de recarga
+                    play_sound('recharge_start')
             else:
                 # Já está recarregando, atualiza a bateria
                 if battery < target_battery:
@@ -1953,6 +2038,19 @@ def draw_side_panel():
     pygame.draw.line(virtual_surface, panel_border_color, (x_margin, y_offset), (PANEL_WIDTH - 15, y_offset), 1)
     y_offset += 15
     
+    # ========== SOM ==========
+    sound_icon = "🔊" if SOUND_ENABLED else "🔇"
+    sound_status = "Ligado" if SOUND_ENABLED else "Desligado"
+    sound_color = (150, 255, 150) if SOUND_ENABLED else (255, 150, 150)
+    sound_text = f"{sound_icon} Som: {sound_status}"
+    sound_surface = font_tiny.render(sound_text, True, sound_color)
+    virtual_surface.blit(sound_surface, (x_margin + 8, y_offset))
+    y_offset += 28
+    
+    # Linha separadora
+    pygame.draw.line(virtual_surface, panel_border_color, (x_margin, y_offset), (PANEL_WIDTH - 15, y_offset), 1)
+    y_offset += 15
+    
     # ========== CONTROLES ==========
     controls_label = font_tiny.render("Controles:", True, (200, 200, 200))
     virtual_surface.blit(controls_label, (x_margin, y_offset))
@@ -1964,6 +2062,7 @@ def draw_side_panel():
         ("A", "Auto Total"),
         ("S", "Semi-Auto"),
         ("R", "Reiniciar"),
+        ("M", "Mute/Som"),
     ]
     
     for key, desc in controls:
@@ -2029,10 +2128,12 @@ def check_game_state():
         # Todos os itens foram coletados e entregues
         if game_state == "playing":
             game_state = "victory"
+            play_sound('victory')
     elif battery <= 0 and (items_remaining > 0 or len(robot_inventory) > 0):
         # Bateria acabou e ainda há itens para entregar
         if game_state == "playing":
             game_state = "game_over"
+            play_sound('gameover')
 
 
 def draw_game_overlay():
@@ -2141,6 +2242,9 @@ def reset_game():
 # Inicializar itens aleatoriamente
 initialize_items_randomly()
 
+# Inicializar sistema de sons
+init_sounds()
+
 # Log do estado inicial
 log("=" * 60, "INIT")
 log("=== SIMULADOR DE ROBÔ - INICIADO ===", "INIT")
@@ -2220,11 +2324,13 @@ while running:
                         waiting_for_action = False
                         last_action_time = 0  # Inicia imediatamente sem delay
                         log("=== MODO AUTOMÁTICO TOTAL ATIVADO (Sequência de ações com delay de 300ms) ===", "MODE")
+                        play_sound('mode_change')
                     else:
                         auto_mode = AUTO_MODE_OFF
                         current_path = []
                         current_action = None
                         log("Modo automático DESATIVADO (voltou para MANUAL)", "MODE")
+                        play_sound('mode_change')
                 
                 elif event.key == pygame.K_s:
                     # Ativa modo semi-automático (sempre ativa, nunca desativa)
@@ -2237,6 +2343,7 @@ while running:
                         current_action = None
                         waiting_for_action = False
                         log("=== MODO SEMI-AUTOMÁTICO ATIVADO ===", "MODE")
+                        play_sound('mode_change')
                     elif auto_mode == AUTO_MODE_SEMI:
                         # Se já está em modo semi-automático, ignora
                         log("Modo semi-automático já está ativo. Aguarde a conclusão da ação atual.", "MODE")
@@ -2289,6 +2396,15 @@ while running:
                         current_action = None
                     # Coleta o segundo item (índice 2)
                     collect_item(2)
+                
+                elif event.key == pygame.K_m:
+                    # Toggle de som
+                    global SOUND_ENABLED
+                    SOUND_ENABLED = not SOUND_ENABLED
+                    status = "LIGADO" if SOUND_ENABLED else "DESLIGADO"
+                    log(f"Som {status}", "SOUND")
+                    if SOUND_ENABLED:
+                        play_sound('mode_change')
             elif event.key == pygame.K_SPACE:
                 # Reinicia o jogo quando em vitória ou game over
                 reset_game()
