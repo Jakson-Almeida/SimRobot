@@ -203,6 +203,16 @@ def play_sound(sound_name):
             log(f"Erro ao tocar som '{sound_name}': {e}", "ERROR")
 
 
+def toggle_sound():
+    """Alterna o estado de habilitação dos sons."""
+    global SOUND_ENABLED
+    SOUND_ENABLED = not SOUND_ENABLED
+    status = "LIGADO" if SOUND_ENABLED else "DESLIGADO"
+    log(f"Som {status}", "SOUND")
+    if SOUND_ENABLED:
+        play_sound('mode_change')
+
+
 def log(message, level="INFO"):
     """Exibe log no terminal se showLogs estiver ativo."""
     if showLogs:
@@ -2399,12 +2409,7 @@ while running:
                 
                 elif event.key == pygame.K_m:
                     # Toggle de som
-                    global SOUND_ENABLED
-                    SOUND_ENABLED = not SOUND_ENABLED
-                    status = "LIGADO" if SOUND_ENABLED else "DESLIGADO"
-                    log(f"Som {status}", "SOUND")
-                    if SOUND_ENABLED:
-                        play_sound('mode_change')
+                    toggle_sound()
             elif event.key == pygame.K_SPACE:
                 # Reinicia o jogo quando em vitória ou game over
                 reset_game()
