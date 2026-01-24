@@ -49,7 +49,7 @@ ITEM_COLORS = {
 matriz2 = [
     ['A', '1', '1', 'R', '1', '1', '1', '1'],
     ['1', '1', '1', '1', '1', '1', '1', '0'],
-    ['1', '1', '1', '0', '0', '1', '0', '1'],
+    ['1', '1', '1', '0', '0', '0', '0', 'A'],
     ['1', 'S', '1', '1', '1', '1', '0', '1'],
     ['1', '0', '1', '1', '0', '1', '1', '1'],
     ['1', '0', '0', '1', '0', '1', '1', 'R'],
@@ -64,6 +64,7 @@ for row_idx, row in enumerate(matriz2):
 # Inicializar pygame
 pygame.init()
 pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+pygame.mixer.set_num_channels(8)  # Permite 8 sons simultâneos
 
 # Configurar a tela
 GRID_WIDTH = len(matriz2[0]) * CELL_SIZE
@@ -140,26 +141,35 @@ last_battery_calculation_time = 0  # Última vez que calculou
 showLogs = True  # Controla se os logs são exibidos no terminal
 
 
-def generate_beep(frequency=440, duration=0.1, volume=0.3):
+def generate_beep(frequency=440, duration=0.1, volume=0.5, wave_type='sine'):
     """Gera um beep sintético com frequência e duração especificadas."""
     sample_rate = 22050
     n_samples = int(round(duration * sample_rate))
     
-    # Gera onda senoidal
-    buf = np.sin(2 * np.pi * np.arange(n_samples) * frequency / sample_rate)
+    # Gera diferentes tipos de onda
+    t = np.arange(n_samples) / sample_rate
+    if wave_type == 'square':
+        # Onda quadrada (som mais "eletrônico")
+        buf = np.sign(np.sin(2 * np.pi * frequency * t))
+    else:
+        # Onda senoidal (som suave)
+        buf = np.sin(2 * np.pi * frequency * t)
     
     # Aplica envelope para evitar clicks
     fade_samples = int(sample_rate * 0.01)  # 10ms de fade
-    fade_in = np.linspace(0, 1, fade_samples)
-    fade_out = np.linspace(1, 0, fade_samples)
-    buf[:fade_samples] *= fade_in
-    buf[-fade_samples:] *= fade_out
+    if fade_samples > 0:
+        fade_in = np.linspace(0, 1, min(fade_samples, len(buf) // 4))
+        fade_out = np.linspace(1, 0, min(fade_samples, len(buf) // 4))
+        buf[:len(fade_in)] *= fade_in
+        buf[-len(fade_out):] *= fade_out
     
     # Converte para formato stereo e aplica volume
     buf = (buf * volume * 32767).astype(np.int16)
     stereo_buf = np.column_stack((buf, buf))
     
-    return pygame.sndarray.make_sound(stereo_buf)
+    sound = pygame.sndarray.make_sound(stereo_buf)
+    sound.set_volume(1.0)  # Volume máximo do som individual
+    return sound
 
 
 def init_sounds():
@@ -167,40 +177,67 @@ def init_sounds():
     global sounds
     
     try:
-        # Som de movimento (beep curto e grave)
-        sounds['move'] = generate_beep(frequency=200, duration=0.05, volume=0.2)
+        # Som de movimento (beep curto e grave) - onda quadrada para ser mais audível
+        sounds['move'] = generate_beep(frequency=300, duration=0.08, volume=0.6, wave_type='square')
         
-        # Som de coleta (beep médio e ascendente)
-        sounds['collect'] = generate_beep(frequency=600, duration=0.15, volume=0.3)
+        # Som de coleta (beep médio) - onda quadrada
+        sounds['collect'] = generate_beep(frequency=800, duration=0.15, volume=0.7, wave_type='square')
         
-        # Som de entrega (beep agudo)
-        sounds['deliver'] = generate_beep(frequency=800, duration=0.2, volume=0.3)
+        # Som de entrega (beep agudo) - onda senoidal suave
+        sounds['deliver'] = generate_beep(frequency=1000, duration=0.2, volume=0.8, wave_type='sine')
         
         # Som de recarga (beep longo e médio)
-        sounds['recharge_start'] = generate_beep(frequency=400, duration=0.25, volume=0.25)
-        sounds['recharge_complete'] = generate_beep(frequency=700, duration=0.3, volume=0.3)
+        sounds['recharge_start'] = generate_beep(frequency=500, duration=0.25, volume=0.7, wave_type='sine')
+        sounds['recharge_complete'] = generate_beep(frequency=900, duration=0.35, volume=0.8, wave_type='sine')
         
-        # Som de vitória (sequência ascendente)
-        sounds['victory'] = generate_beep(frequency=880, duration=0.4, volume=0.4)
+        # Som de vitória (beep longo e alegre)
+        sounds['victory'] = generate_beep(frequency=1200, duration=0.5, volume=0.9, wave_type='sine')
         
-        # Som de game over (beep grave descendente)
-        sounds['gameover'] = generate_beep(frequency=200, duration=0.5, volume=0.4)
+        # Som de game over (beep grave e longo)
+        sounds['gameover'] = generate_beep(frequency=150, duration=0.6, volume=0.8, wave_type='square')
         
-        # Som de mudança de modo
-        sounds['mode_change'] = generate_beep(frequency=500, duration=0.15, volume=0.25)
+        # Som de mudança de modo (beep médio)
+        sounds['mode_change'] = generate_beep(frequency=600, duration=0.18, volume=0.7, wave_type='square')
+        
+        # Som de teste ao inicializar
+        sounds['test'] = generate_beep(frequency=440, duration=0.3, volume=0.8, wave_type='sine')
         
         log("Sistema de sons inicializado com sucesso!", "SOUND")
+        log(f"Total de sons carregados: {len(sounds)}", "SOUND")
+        
+        # Toca som de teste
+        if SOUND_ENABLED:
+            sounds['test'].play()
+            log("Som de teste tocado (440 Hz por 0.3s)", "SOUND")
+        
     except Exception as e:
         log(f"Erro ao inicializar sons: {e}", "ERROR")
+        import traceback
+        log(traceback.format_exc(), "ERROR")
 
 
-def play_sound(sound_name):
+def play_sound(sound_name, debug=False):
     """Toca um som se o sistema de som estiver habilitado."""
-    if SOUND_ENABLED and sound_name in sounds:
-        try:
-            sounds[sound_name].play()
-        except Exception as e:
-            log(f"Erro ao tocar som '{sound_name}': {e}", "ERROR")
+    if not SOUND_ENABLED:
+        if debug:
+            log(f"Som '{sound_name}' não tocado (SOUND_ENABLED = False)", "SOUND")
+        return
+    
+    if sound_name not in sounds:
+        log(f"Som '{sound_name}' não encontrado!", "ERROR")
+        return
+    
+    try:
+        channel = sounds[sound_name].play()
+        if debug:
+            if channel:
+                log(f"♪ Som '{sound_name}' tocando no canal {channel}", "SOUND")
+            else:
+                log(f"Som '{sound_name}' não pôde ser tocado (sem canal disponível)", "SOUND")
+    except Exception as e:
+        log(f"Erro ao tocar som '{sound_name}': {e}", "ERROR")
+        import traceback
+        log(traceback.format_exc(), "ERROR")
 
 
 def toggle_sound():
@@ -208,9 +245,10 @@ def toggle_sound():
     global SOUND_ENABLED
     SOUND_ENABLED = not SOUND_ENABLED
     status = "LIGADO" if SOUND_ENABLED else "DESLIGADO"
-    log(f"Som {status}", "SOUND")
+    log(f"========== Som {status} ==========", "SOUND")
     if SOUND_ENABLED:
-        play_sound('mode_change')
+        log("Tocando som de confirmação...", "SOUND")
+        play_sound('mode_change', debug=True)
 
 
 def log(message, level="INFO"):
@@ -2073,6 +2111,7 @@ def draw_side_panel():
         ("S", "Semi-Auto"),
         ("R", "Reiniciar"),
         ("M", "Mute/Som"),
+        ("T", "Testar Sons"),
     ]
     
     for key, desc in controls:
@@ -2252,6 +2291,19 @@ def reset_game():
 # Inicializar itens aleatoriamente
 initialize_items_randomly()
 
+# Diagnóstico do mixer de áudio
+log("=" * 60, "SOUND")
+log("DIAGNÓSTICO DO SISTEMA DE ÁUDIO", "SOUND")
+try:
+    mixer_info = pygame.mixer.get_init()
+    if mixer_info:
+        log(f"Mixer inicializado: freq={mixer_info[0]}Hz, size={mixer_info[1]}, channels={mixer_info[2]}", "SOUND")
+        log(f"Canais disponíveis: {pygame.mixer.get_num_channels()}", "SOUND")
+    else:
+        log("AVISO: Mixer não foi inicializado!", "ERROR")
+except Exception as e:
+    log(f"Erro ao verificar mixer: {e}", "ERROR")
+
 # Inicializar sistema de sons
 init_sounds()
 
@@ -2410,6 +2462,20 @@ while running:
                 elif event.key == pygame.K_m:
                     # Toggle de som
                     toggle_sound()
+                
+                elif event.key == pygame.K_t:
+                    # Testa todos os sons (apenas se som estiver habilitado)
+                    if SOUND_ENABLED:
+                        log("========== TESTANDO TODOS OS SONS ==========", "SOUND")
+                        test_sounds = ['move', 'collect', 'deliver', 'recharge_start', 
+                                      'recharge_complete', 'mode_change', 'victory', 'gameover']
+                        for i, sound_name in enumerate(test_sounds):
+                            log(f"Teste {i+1}/{len(test_sounds)}: {sound_name}", "SOUND")
+                            play_sound(sound_name, debug=True)
+                            pygame.time.wait(400)  # Espera 400ms entre sons
+                        log("========== TESTE COMPLETO ==========", "SOUND")
+                    else:
+                        log("Som está desabilitado. Pressione M para habilitar.", "SOUND")
             elif event.key == pygame.K_SPACE:
                 # Reinicia o jogo quando em vitória ou game over
                 reset_game()
