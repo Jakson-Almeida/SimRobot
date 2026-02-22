@@ -87,6 +87,7 @@ panel_max_scroll = 0     # Máximo de scroll possível
 # Sistema de sons
 SOUND_ENABLED = True  # Toggle para habilitar/desabilitar sons
 sounds = {}
+sounds_failed = set()  # Nomes de sons que falharam ao criar (evita tentar de novo)
 
 # Posição real do robô (para animação)
 robot_real_pos = [robot_grid_pos[0] * CELL_SIZE, robot_grid_pos[1] * CELL_SIZE]
@@ -142,78 +143,115 @@ showLogs = True  # Controla se os logs são exibidos no terminal
 
 
 def generate_beep(frequency=440, duration=0.1, volume=0.5, wave_type='sine'):
-    """Gera um beep sintético com frequência e duração especificadas."""
-    sample_rate = 22050
-    n_samples = int(round(duration * sample_rate))
+    """Gera um beep sintético. Retorna None em caso de erro (não lança exceção)."""
+    try:
+        sample_rate = 22050
+        n_samples = int(round(duration * sample_rate))
+        if n_samples <= 0:
+            return None
+        
+        # Gera diferentes tipos de onda
+        t = np.arange(n_samples, dtype=np.float64) / sample_rate
+        if wave_type == 'square':
+            buf = np.sign(np.sin(2 * np.pi * frequency * t))
+        else:
+            buf = np.sin(2 * np.pi * frequency * t)
+        
+        # Aplica envelope para evitar clicks
+        fade_samples = max(1, int(sample_rate * 0.01))
+        fade_samples = min(fade_samples, len(buf) // 4)
+        if fade_samples > 0:
+            fade_in = np.linspace(0, 1, fade_samples)
+            fade_out = np.linspace(1, 0, fade_samples)
+            buf[:fade_samples] *= fade_in
+            buf[-fade_samples:] *= fade_out
+        
+        # Converte para formato stereo e aplica volume (array contíguo para compatibilidade)
+        buf = (buf * volume * 32767).astype(np.int16)
+        stereo_buf = np.ascontiguousarray(np.column_stack((buf, buf)))
+        
+        sound = pygame.sndarray.make_sound(stereo_buf)
+        if hasattr(sound, 'set_volume'):
+            sound.set_volume(1.0)
+        return sound
+    except Exception as e:
+        log(f"generate_beep falhou (freq={frequency}): {e}", "SOUND")
+        return None
+
+
+# Parâmetros de cada som para inicialização e criação sob demanda
+SOUND_DEFINITIONS = {
+    'move': {'frequency': 300, 'duration': 0.08, 'volume': 0.6, 'wave_type': 'square'},
+    'collect': {'frequency': 800, 'duration': 0.15, 'volume': 0.7, 'wave_type': 'square'},
+    'deliver': {'frequency': 1000, 'duration': 0.2, 'volume': 0.8, 'wave_type': 'sine'},
+    'recharge_start': {'frequency': 500, 'duration': 0.25, 'volume': 0.7, 'wave_type': 'sine'},
+    'recharge_complete': {'frequency': 900, 'duration': 0.35, 'volume': 0.8, 'wave_type': 'sine'},
+    'victory': {'frequency': 1200, 'duration': 0.5, 'volume': 0.9, 'wave_type': 'sine'},
+    'gameover': {'frequency': 150, 'duration': 0.6, 'volume': 0.8, 'wave_type': 'square'},
+    'mode_change': {'frequency': 600, 'duration': 0.18, 'volume': 0.7, 'wave_type': 'square'},
+    'test': {'frequency': 440, 'duration': 0.3, 'volume': 0.8, 'wave_type': 'sine'},
+}
+
+# Sons que falharam ao criar (não tentar de novo)
+sounds_failed = set()
+
+
+def ensure_sound(sound_name):
+    """Cria o som sob demanda se existir definição e ainda não tiver falhado. Retorna True se disponível."""
+    global sounds, sounds_failed
     
-    # Gera diferentes tipos de onda
-    t = np.arange(n_samples) / sample_rate
-    if wave_type == 'square':
-        # Onda quadrada (som mais "eletrônico")
-        buf = np.sign(np.sin(2 * np.pi * frequency * t))
-    else:
-        # Onda senoidal (som suave)
-        buf = np.sin(2 * np.pi * frequency * t)
+    if sound_name in sounds and sounds[sound_name] is not None:
+        return True
+    if sound_name in sounds_failed:
+        return False
+    if sound_name not in SOUND_DEFINITIONS:
+        return False
     
-    # Aplica envelope para evitar clicks
-    fade_samples = int(sample_rate * 0.01)  # 10ms de fade
-    if fade_samples > 0:
-        fade_in = np.linspace(0, 1, min(fade_samples, len(buf) // 4))
-        fade_out = np.linspace(1, 0, min(fade_samples, len(buf) // 4))
-        buf[:len(fade_in)] *= fade_in
-        buf[-len(fade_out):] *= fade_out
+    try:
+        snd = generate_beep(**SOUND_DEFINITIONS[sound_name])
+        if snd is not None:
+            sounds[sound_name] = snd
+            log(f"Som '{sound_name}' criado sob demanda.", "SOUND")
+            return True
+    except Exception as e:
+        log(f"Erro ao criar som '{sound_name}': {e}", "ERROR")
     
-    # Converte para formato stereo e aplica volume
-    buf = (buf * volume * 32767).astype(np.int16)
-    stereo_buf = np.column_stack((buf, buf))
-    
-    sound = pygame.sndarray.make_sound(stereo_buf)
-    sound.set_volume(1.0)  # Volume máximo do som individual
-    return sound
+    sounds_failed.add(sound_name)
+    return False
 
 
 def init_sounds():
-    """Inicializa todos os sons do jogo."""
-    global sounds
+    """Inicializa todos os sons do jogo. Um falha não impede os demais."""
+    global sounds, sounds_failed
     
-    try:
-        # Som de movimento (beep curto e grave) - onda quadrada para ser mais audível
-        sounds['move'] = generate_beep(frequency=300, duration=0.08, volume=0.6, wave_type='square')
-        
-        # Som de coleta (beep médio) - onda quadrada
-        sounds['collect'] = generate_beep(frequency=800, duration=0.15, volume=0.7, wave_type='square')
-        
-        # Som de entrega (beep agudo) - onda senoidal suave
-        sounds['deliver'] = generate_beep(frequency=1000, duration=0.2, volume=0.8, wave_type='sine')
-        
-        # Som de recarga (beep longo e médio)
-        sounds['recharge_start'] = generate_beep(frequency=500, duration=0.25, volume=0.7, wave_type='sine')
-        sounds['recharge_complete'] = generate_beep(frequency=900, duration=0.35, volume=0.8, wave_type='sine')
-        
-        # Som de vitória (beep longo e alegre)
-        sounds['victory'] = generate_beep(frequency=1200, duration=0.5, volume=0.9, wave_type='sine')
-        
-        # Som de game over (beep grave e longo)
-        sounds['gameover'] = generate_beep(frequency=150, duration=0.6, volume=0.8, wave_type='square')
-        
-        # Som de mudança de modo (beep médio)
-        sounds['mode_change'] = generate_beep(frequency=600, duration=0.18, volume=0.7, wave_type='square')
-        
-        # Som de teste ao inicializar
-        sounds['test'] = generate_beep(frequency=440, duration=0.3, volume=0.8, wave_type='sine')
-        
-        log("Sistema de sons inicializado com sucesso!", "SOUND")
-        log(f"Total de sons carregados: {len(sounds)}", "SOUND")
-        
-        # Toca som de teste
-        if SOUND_ENABLED:
+    sounds_failed.clear()
+    
+    for name, kwargs in SOUND_DEFINITIONS.items():
+        try:
+            snd = generate_beep(**kwargs)
+            if snd is not None:
+                sounds[name] = snd
+            else:
+                sounds_failed.add(name)
+        except Exception as e:
+            log(f"Erro ao criar som '{name}': {e}", "ERROR")
+            sounds_failed.add(name)
+    
+    loaded = len(sounds)
+    total = len(SOUND_DEFINITIONS)
+    log(f"Sistema de sons: {loaded}/{total} carregados.", "SOUND")
+    
+    if loaded == 0:
+        log("Nenhum som pôde ser carregado. Verifique numpy e pygame.mixer.", "ERROR")
+        return
+    
+    # Toca som de teste se disponível
+    if SOUND_ENABLED and 'test' in sounds and sounds['test'] is not None:
+        try:
             sounds['test'].play()
-            log("Som de teste tocado (440 Hz por 0.3s)", "SOUND")
-        
-    except Exception as e:
-        log(f"Erro ao inicializar sons: {e}", "ERROR")
-        import traceback
-        log(traceback.format_exc(), "ERROR")
+            log("Som de teste tocado (440 Hz).", "SOUND")
+        except Exception as e:
+            log(f"Erro ao tocar teste: {e}", "ERROR")
 
 
 def play_sound(sound_name, debug=False):
@@ -223,21 +261,24 @@ def play_sound(sound_name, debug=False):
             log(f"Som '{sound_name}' não tocado (SOUND_ENABLED = False)", "SOUND")
         return
     
-    if sound_name not in sounds:
-        log(f"Som '{sound_name}' não encontrado!", "ERROR")
-        return
+    # Se o som não está carregado, tenta criar sob demanda (apenas uma vez por nome)
+    if sound_name not in sounds or sounds[sound_name] is None:
+        if not ensure_sound(sound_name):
+            if debug:
+                log(f"Som '{sound_name}' indisponível.", "SOUND")
+            return
     
     try:
-        channel = sounds[sound_name].play()
-        if debug:
-            if channel:
-                log(f"♪ Som '{sound_name}' tocando no canal {channel}", "SOUND")
-            else:
-                log(f"Som '{sound_name}' não pôde ser tocado (sem canal disponível)", "SOUND")
+        snd = sounds[sound_name]
+        if snd is None:
+            return
+        channel = snd.play()
+        if debug and channel:
+            log(f"♪ Som '{sound_name}' tocando.", "SOUND")
     except Exception as e:
+        global sounds_failed
         log(f"Erro ao tocar som '{sound_name}': {e}", "ERROR")
-        import traceback
-        log(traceback.format_exc(), "ERROR")
+        sounds_failed.add(sound_name)
 
 
 def toggle_sound():
